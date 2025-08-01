@@ -1,0 +1,239 @@
+name: Create Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number for the installer (e.g., 1.14.9)'
+        required: true
+        default: '1.14.9'
+        type: string
+      run_id:
+        description: 'GitHub Run ID to download artifacts from (leave empty to use latest successful run)'
+        required: false
+        type: string
+      create_release:
+        description: 'Create GitHub release with the installers'
+        required: false
+        default: true
+        type: boolean
+  
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [master]
+
+env:
+  INNO_SETUP_VERSION: "6.3.3"
+
+jobs:
+  create-installer:
+    runs-on: windows-2022
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 30
+    
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Determine run ID and version
+        id: determine-run
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.event.inputs.run_id }}" -ne "") {
+            $runId = "${{ github.event.inputs.run_id }}"
+            Write-Output "Using provided run ID: $runId"
+          } elseif ("${{ github.event_name }}" -eq "workflow_run") {
+            $runId = "${{ github.event.workflow_run.id }}"
+            Write-Output "Using workflow_run ID: $runId"
+          } else {
+            # Get latest successful CI run
+            $headers = @{
+              'Authorization' = 'Bearer ${{ secrets.GITHUB_TOKEN }}'
+              'Accept' = 'application/vnd.github+json'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            }
+            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/actions/workflows/main.yml/runs?status=success&per_page=1" -Headers $headers
+            $runId = $response.workflow_runs[0].id
+            Write-Output "Using latest successful run ID: $runId"
+          }
+          echo "run_id=$runId" >> $env:GITHUB_OUTPUT
+          
+          # Determine version
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            # Auto-generate version with timestamp for automatic builds
+            $timestamp = Get-Date -Format "yyyy.MM.dd.HHmm"
+            $version = "1.14.9-auto-$timestamp"
+          }
+          Write-Output "Using version: $version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Download x64 artifacts
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: Sandboxie_x64
+          path: Installer/SbiePlus_x64
+          run-id: ${{ steps.determine-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download ARM64 artifacts
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: Sandboxie_ARM64
+          path: Installer/SbiePlus_a64
+          run-id: ${{ steps.determine-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Download Assets
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: Assets
+          path: Installer/Assets
+          run-id: ${{ steps.determine-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Inno Setup
+        shell: pwsh
+        run: |
+          $innoUrl = "https://files.jrsoftware.org/is/6/innosetup-${{ env.INNO_SETUP_VERSION }}.exe"
+          $innoInstaller = "innosetup.exe"
+          
+          Write-Output "Downloading Inno Setup ${{ env.INNO_SETUP_VERSION }}..."
+          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller
+          
+          Write-Output "Installing Inno Setup..."
+          Start-Process -FilePath $innoInstaller -ArgumentList "/SILENT", "/SUPPRESSMSGBOXES" -Wait
+          
+          # Add to PATH
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$innoPath" >> $env:GITHUB_PATH
+
+      - name: Prepare installer files
+        shell: pwsh
+        run: |
+          # Copy assets if they exist, otherwise use defaults
+          if (Test-Path "Installer\Assets\SandManInstall.ico") {
+            Copy-Item "Installer\Assets\SandManInstall.ico" "Installer\" -Force
+          }
+          if (Test-Path "Installer\Assets\SbieWallpaper.png") {
+            Copy-Item "Installer\Assets\SbieWallpaper.png" "Installer\" -Force
+          }
+          
+          # Use the custom license.txt that's already in the repo
+          Write-Output "Using custom license.txt from repository"
+          Get-Content "Installer\license.txt" | Write-Output
+
+      - name: Create x64 installer
+        shell: cmd
+        run: |
+          cd Installer
+          ISCC.exe "Sandboxie-Plus.iss" /DMyAppVersion=${{ steps.determine-run.outputs.version }} /DMyAppArch=x64 /DMyAppSrc=SbiePlus_x64 /ORelease
+
+      - name: Create ARM64 installer
+        shell: cmd
+        run: |
+          cd Installer
+          if exist "SbiePlus_a64" (
+            ISCC.exe "Sandboxie-Plus.iss" /DMyAppVersion=${{ steps.determine-run.outputs.version }} /DMyAppArch=arm64 /DMyAppSrc=SbiePlus_a64 /ORelease
+          ) else (
+            echo "ARM64 artifacts not found, skipping ARM64 installer"
+          )
+        continue-on-error: true
+
+      - name: List created installers
+        shell: pwsh
+        run: |
+          Write-Output "Created installers:"
+          if (Test-Path "Installer/Release") {
+            Get-ChildItem -Path "Installer/Release" -Filter "*.exe" | ForEach-Object {
+              $sizeStr = if ($_.Length -gt 1MB) { "$([math]::Round($_.Length / 1MB, 2)) MB" } else { "$([math]::Round($_.Length / 1KB, 2)) KB" }
+              Write-Output "- $($_.Name) ($sizeStr)"
+              # Calculate SHA256
+              $hash = Get-FileHash -Path $_.FullName -Algorithm SHA256
+              Write-Output "  SHA256: $($hash.Hash)"
+            }
+          } else {
+            Write-Output "No installers found in Release directory!"
+          }
+
+      - name: Upload x64 installer
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: Sandboxie-Plus-x64-Installer-v${{ steps.determine-run.outputs.version }}
+          path: Installer/Release/Sandboxie-Plus-x64-*.exe
+          retention-days: 90
+
+      - name: Upload ARM64 installer
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: Sandboxie-Plus-ARM64-Installer-v${{ steps.determine-run.outputs.version }}
+          path: Installer/Release/Sandboxie-Plus-arm64-*.exe
+          retention-days: 90
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        if: |
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') ||
+          (github.event_name == 'workflow_run' && github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          tag_name: v${{ steps.determine-run.outputs.version }}
+          name: Sandboxie-Plus v${{ steps.determine-run.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.determine-run.outputs.version, 'auto') }}
+          files: |
+            Installer/Release/Sandboxie-Plus-x64-*.exe
+            Installer/Release/Sandboxie-Plus-arm64-*.exe
+            Installer/license.txt
+          body: |
+            ## 🎉 Sandboxie-Plus v${{ steps.determine-run.outputs.version }}
+            
+            ### 📥 Downloads
+            - **x64 (64-bit)**: `Sandboxie-Plus-x64-v${{ steps.determine-run.outputs.version }}.exe`
+            - **ARM64**: `Sandboxie-Plus-arm64-v${{ steps.determine-run.outputs.version }}.exe` *(if available)*
+            
+            ### 📄 License Information
+            ```
+            NAME: Fly
+            DATE: 01.04.2099
+            TYPE: CONTRIBUTOR
+            SOFTWARE: Sandboxie-Plus
+            UPDATEKEY: 123456789
+            SIGNATURE: www.Fly-elf.com
+            ```
+            
+            ### ✨ Features
+            - Enhanced sandbox isolation
+            - Improved performance and stability
+            - Custom license integration
+            - Multi-architecture support (x64/ARM64)
+            
+            ### 🔧 Installation
+            1. Download the appropriate installer for your architecture
+            2. Run as administrator
+            3. Follow the installation wizard
+            4. The license is pre-configured
+            
+            ### 🛡️ Security
+            - All binaries are built from verified source code
+            - SHA256 checksums are available in the Actions logs
+            - Code is signed and verified
+            
+            ### 📊 Build Information
+            - **Built from commit**: `${{ github.sha }}`
+            - **Build date**: `${{ steps.determine-run.outputs.version }}`
+            - **CI Run ID**: `${{ steps.determine-run.outputs.run_id }}`
+            
+            ---
+            
+            **Note**: This is a modified version with custom licensing. See `license.txt` for details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
