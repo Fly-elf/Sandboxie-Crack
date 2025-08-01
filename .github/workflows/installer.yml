@@ -25,7 +25,7 @@ on:
     branches: [master]
 
 env:
-  INNO_SETUP_VERSION: "6.3.3"
+  INNO_SETUP_VERSION: "6.4.3"
 
 jobs:
   create-installer:
@@ -103,7 +103,7 @@ jobs:
       - name: Setup Inno Setup
         shell: pwsh
         run: |
-          $innoUrl = "https://files.jrsoftware.org/is/6/innosetup-${{ env.INNO_SETUP_VERSION }}.exe"
+          $innoUrl = "https://files.innosetup.nl/innosetup-${{ env.INNO_SETUP_VERSION }}.exe"
           $innoInstaller = "innosetup.exe"
           
           Write-Output "Downloading Inno Setup ${{ env.INNO_SETUP_VERSION }}..."
