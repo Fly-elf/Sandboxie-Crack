@@ -328,11 +328,15 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $files = Get-ChildItem "$env:OUTDIR\*.exe"
           if (-not $files) { throw 'ISCC produced no installer.' }
-          $files | ForEach-Object {
+          $lines = $files | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             Write-Host "$h  $($_.Name)  ($([math]::Round($_.Length / 1MB, 1)) MB)"
             "$h  $($_.Name)"
-          } | Set-Content "$env:OUTDIR\SHA256SUMS.txt" -Encoding ASCII
+          }
+
+          # LF, not CRLF: sha256sum and shasum -c on Linux and macOS otherwise
+          # look for file names with a trailing carriage return.
+          [IO.File]::WriteAllText("$env:OUTDIR\SHA256SUMS.txt", ($lines -join "`n") + "`n")
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7.0.1
