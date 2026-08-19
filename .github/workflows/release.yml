@@ -433,6 +433,19 @@ jobs:
           $notesPath = "$env:RUNNER_TEMP\notes.md"
           $assets    = @(Get-ChildItem "$env:OUTDIR\*" | ForEach-Object { $_.FullName })
 
+          # Create the tag only if it is missing, and never move or delete it.
+          gh api "repos/$env:GH_REPO/git/ref/tags/$tag" --silent 2>$null | Out-Null
+          $tagExists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+
+          if (-not $tagExists) {
+            gh api -X POST "repos/$env:GH_REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$sha" --silent
+            if ($LASTEXITCODE -ne 0) {
+              $global:LASTEXITCODE = 0
+              throw "Could not create tag '$tag'. GitHub rate-limits repeated ref creation; create it once by hand with: git tag $tag $sha && git push origin refs/tags/$tag"
+            }
+          }
+
           gh release view $tag --json id 2>$null | Out-Null
           $releaseExists = ($LASTEXITCODE -eq 0)
           $global:LASTEXITCODE = 0
@@ -447,7 +460,7 @@ jobs:
             }
             Invoke-Gh @('release','edit',$tag,'--title',$title,'--notes-file',$notesPath,"--prerelease=$($rolling.ToString().ToLower())")
           } else {
-            $create = @('release','create',$tag,'--target',$sha,'--title',$title,'--notes-file',$notesPath)
+            $create = @('release','create',$tag,'--verify-tag','--title',$title,'--notes-file',$notesPath)
             if ($rolling) { $create += '--prerelease' }
             Invoke-Gh $create
           }
