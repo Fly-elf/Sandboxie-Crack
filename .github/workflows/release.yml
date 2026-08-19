@@ -82,11 +82,12 @@ jobs:
           "head_branch=$($info.headBranch)" >> $env:GITHUB_OUTPUT
 
       # Only the installer patch files; everything else comes from the CI run's
-      # artifacts, at the very commit that produced them.
+      # artifacts. These are release tooling and are versioned with this workflow
+      # rather than with the code CI built, so they come from the default branch
+      # (which is also where workflow_run always takes this workflow file from).
       - name: Checkout installer patches
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.ci.outputs.head_sha }}
           sparse-checkout: .github/installer
           path: patches
 
