@@ -1,15 +1,15 @@
 
 
-;
-; Appended to a working copy of Installer/Sandboxie-Plus.iss by
-; .github/workflows/release.yml. The file in the repository is never modified.
-;
-; SbieDrv.sys is signed with a self-issued certificate, so Windows refuses to
-; load it until that certificate is trusted. Rather than making the user run
-; certutil by hand, the installer offers to do it through the "TrustCert" task.
-; {#MyCertThumbprint} is defined by the workflow from the certificate that
-; actually signed this build.
-;
+//
+// Appended to a working copy of Installer/Sandboxie-Plus.iss by
+// .github/workflows/release.yml. The file in the repository is never modified.
+//
+// SbieDrv.sys is signed with a self-issued certificate, so Windows refuses to
+// load it until that certificate is trusted. Rather than making the user run
+// certutil by hand, the installer offers to do it through the "TrustCert" task.
+// {#MyCertThumbprint} is defined by the workflow from the certificate that
+// actually signed this build.
+//
 
 function NtQuerySystemInformation(SystemInformationClass: Cardinal;
   var SystemInformation: Cardinal; SystemInformationLength: Cardinal;
