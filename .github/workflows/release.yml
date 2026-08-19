@@ -188,8 +188,12 @@ jobs:
           $targets = Get-ChildItem "$env:STAGE\Release\*\SbieDrv.sys"
           if (-not $targets) { throw 'No SbieDrv.sys found to sign.' }
 
+          # Strip a trailing newline: pasting the password into `gh secret set`
+          # easily carries one, and signtool would reject it as a wrong password.
+          $pw = $env:SIGN_CERT_PASSWORD -replace '[\r\n]+$', ''
+
           $common = @('sign', '/fd', 'sha256', '/f', $pfx)
-          if ($env:SIGN_CERT_PASSWORD) { $common += @('/p', $env:SIGN_CERT_PASSWORD) }
+          if ($pw) { $common += @('/p', $pw) }
 
           foreach ($t in $targets) {
             # Timestamping is best effort: it keeps the signature valid past the
@@ -303,8 +307,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
 
+          $pw = $env:SIGN_CERT_PASSWORD -replace '[\r\n]+$', ''
+
           $common = @('sign', '/fd', 'sha256', '/f', $env:SIGN_PFX)
-          if ($env:SIGN_CERT_PASSWORD) { $common += @('/p', $env:SIGN_CERT_PASSWORD) }
+          if ($pw) { $common += @('/p', $pw) }
 
           foreach ($exe in Get-ChildItem "$env:OUTDIR\*.exe") {
             & $env:SIGNTOOL @common '/tr' 'http://timestamp.digicert.com' '/td' 'sha256' $exe.FullName
