@@ -411,10 +411,10 @@ jobs:
           )
           Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notes -Encoding UTF8
 
-          # Deleting the release and immediately recreating it under the same tag
-          # is racy: GitHub intermittently answers the create with HTTP 403 while
-          # the deletion is still settling. Move the tag and update the release in
-          # place instead, so the release object is never absent.
+          # The GITHUB_TOKEN cannot force-update a refs/tags ref (HTTP 403 even
+          # with contents: write), so a rolling tag has to be moved by deleting
+          # the release together with its tag and creating it again. Recreating
+          # too soon also answers 403, so wait until the tag is really gone.
           function Invoke-Gh {
             param([string[]]$GhArgs, [int]$Retries = 3)
             for ($i = 1; $i -le $Retries; $i++) {
@@ -428,40 +428,29 @@ jobs:
             throw "gh $($GhArgs[0..1] -join ' ') failed after $Retries attempts."
           }
 
-          $notesPath = "$env:RUNNER_TEMP\notes.md"
-          $assets    = @(Get-ChildItem "$env:OUTDIR\*" | ForEach-Object { $_.FullName })
-
-          # Point the tag at the commit these binaries were built from.
-          gh api "repos/$env:GH_REPO/git/ref/tags/$tag" --silent 2>$null
-          $tagExists = ($LASTEXITCODE -eq 0)
-          $global:LASTEXITCODE = 0
-
-          if (-not $tagExists) {
-            Invoke-Gh @('api','-X','POST',"repos/$env:GH_REPO/git/refs",'-f',"ref=refs/tags/$tag",'-f',"sha=$sha",'--silent')
-          } elseif ($rolling) {
-            Invoke-Gh @('api','-X','PATCH',"repos/$env:GH_REPO/git/refs/tags/$tag",'-f',"sha=$sha",'-F','force=true','--silent')
+          function Test-Tag {
+            gh api "repos/$env:GH_REPO/git/ref/tags/$tag" --silent 2>$null | Out-Null
+            $found = ($LASTEXITCODE -eq 0)
+            $global:LASTEXITCODE = 0
+            return $found
           }
 
-          gh release view $tag --json id 2>$null | Out-Null
-          $releaseExists = ($LASTEXITCODE -eq 0)
-          $global:LASTEXITCODE = 0
+          if ($rolling) {
+            gh release delete $tag --cleanup-tag --yes 2>$null
+            $global:LASTEXITCODE = 0
 
-          if ($releaseExists) {
-            # Drop the previous build's assets: after a version bump their file
-            # names differ, so --clobber alone would leave the old ones behind.
-            $stale = @(gh release view $tag --json assets --jq '.assets[].name') | Where-Object { $_ }
-            foreach ($name in $stale) {
-              gh release delete-asset $tag $name --yes
-              $global:LASTEXITCODE = 0
+            $gone = $false
+            for ($i = 0; $i -lt 12; $i++) {
+              if (-not (Test-Tag)) { $gone = $true; break }
+              Start-Sleep -Seconds 5
             }
-            Invoke-Gh @('release','edit',$tag,'--title',$title,'--notes-file',$notesPath,"--prerelease=$($rolling.ToString().ToLower())")
-          } else {
-            $create = @('release','create',$tag,'--target',$sha,'--title',$title,'--notes-file',$notesPath)
-            if ($rolling) { $create += '--prerelease' }
-            Invoke-Gh $create
+            if (-not $gone) { Write-Host "::warning::Tag '$tag' still present after 60s, creating anyway." }
           }
 
-          Invoke-Gh (@('release','upload',$tag) + $assets + @('--clobber'))
+          $create = @('release','create',$tag,'--target',$sha,'--title',$title,'--notes-file',"$env:RUNNER_TEMP\notes.md")
+          if ($rolling) { $create += '--prerelease' }
+          $create += (Get-ChildItem "$env:OUTDIR\*" | ForEach-Object { $_.FullName })
+          Invoke-Gh $create
 
           $url = gh release view $tag --json url --jq '.url'
           Write-Host "Published: $url"
