@@ -1,195 +1,381 @@
-# Sandboxie Plus / Classic
+# Sandboxie-Crack
 
-<p align='center'>
-EN | <a href='./README_zh_CN.md'>中文</a>
-</p>
+A personal fork of [sandboxie-plus/Sandboxie](https://github.com/sandboxie-plus/Sandboxie) that builds and
+publishes its own installers straight from CI, without a commercial code-signing certificate.
 
-[![Plus license](https://img.shields.io/badge/Plus%20license-Custom%20-blue.svg)](./LICENSE.Plus) [![Classic license](https://img.shields.io/github/license/Sandboxie-Plus/Sandboxie?label=Classic%20license&color=blue)](./LICENSE.Classic) [![GitHub Release](https://img.shields.io/github/release/sandboxie-plus/Sandboxie.svg)](https://github.com/sandboxie-plus/Sandboxie/releases/latest) [![GitHub Pre-Release](https://img.shields.io/github/release/sandboxie-plus/Sandboxie/all.svg?label=pre-release)](https://github.com/sandboxie-plus/Sandboxie/releases) [![GitHub Build Status](https://github.com/sandboxie-plus/Sandboxie/actions/workflows/main.yml/badge.svg)](https://github.com/sandboxie-plus/Sandboxie/actions) [![GitHub Codespell Status](https://github.com/sandboxie-plus/Sandboxie/actions/workflows/codespell.yml/badge.svg)](https://github.com/sandboxie-plus/Sandboxie/actions/workflows/codespell.yml) [![WinGet Build Status](https://github.com/sandboxie-plus/Sandboxie/actions/workflows/winget.yml/badge.svg)](https://github.com/sandboxie-plus/Sandboxie/actions/workflows/winget.yml) [![Gurubase](https://img.shields.io/badge/Gurubase-Ask%20Sandboxie%20Guru-006BFF)](https://gurubase.io/g/sandboxie)
+The application code is upstream's. What this fork adds is a release pipeline: every push to `master`
+compiles the project, packages it into an Inno Setup installer and publishes it as a GitHub release.
+Because the kernel driver is not signed by a certificate Windows trusts out of the box, installing these
+builds takes a few extra steps — [that is what most of this README is about](#installation).
 
-[![Roadmap](https://img.shields.io/badge/Roadmap-Link%20-blue?style=for-the-badge)](https://www.wilderssecurity.com/threads/updated-sandboxie-plus-roadmap.456886/) [![Join our Discord Server](https://img.shields.io/badge/Join-Our%20Discord%20Server%20for%20bugs,%20feedback%20and%20more!-blue?style=for-the-badge&logo=discord)](https://discord.gg/S4tFu6Enne)
+> **This is not the official Sandboxie.** For supported, properly signed builds use the
+> [upstream releases](https://github.com/sandboxie-plus/Sandboxie/releases/latest). Report bugs in the
+> application itself upstream, not here.
 
-|  System requirements  |      Release notes     |     Contribution guidelines   |      Security policy      |      Code of Conduct      |
-|         :---:         |          :---:         |          :---:                |          :---:            |          :---:            |
-| Windows 7 or higher (64-bit) |  [CHANGELOG.md](./CHANGELOG.md)  |  [CONTRIBUTING.md](./CONTRIBUTING.md)  |   [SECURITY.md](./SECURITY.md)  |  [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)  |
+---
 
-Sandboxie is a sandbox-based isolation software for Windows NT-based operating systems that creates a secure operating environment in which applications can be run or installed without permanently modifying local & mapped drives or the Windows registry. An isolated virtual environment allows controlled testing of untrusted programs and web surfing.<br>
+## What Sandboxie is
 
-Sandboxie allows you to create virtually unlimited sandboxes and run them alone or simultaneously to isolate programs from the host and each other, while also allowing you to run as many programs simultaneously in a single box as you wish.
+Sandboxie is a sandbox-based isolation tool for Windows NT systems. It runs programs inside an isolated
+environment so they can execute or install without permanently modifying local and mapped drives or the
+Windows registry — useful for testing untrusted software, containing browsers, or throwing away changes
+after the fact.
 
-**Note: This is a community fork that took place after the release of the Sandboxie source code and not the official continuation of the previous development (see the [project history](#project-history) and [#2926](https://github.com/sandboxie-plus/Sandboxie/issues/2926)).**
+It ships in two editions built from the same core, so both have the same security and compatibility:
 
-## ⏬ Download
+| Edition | UI | Status |
+| --- | --- | --- |
+| **Plus** | Modern Qt interface (`SandMan.exe`) | Actively developed upstream, gets all new features |
+| **Classic** | Legacy MFC interface (`SbieCtrl.exe`) | No longer developed |
 
-[Latest Release](https://github.com/sandboxie-plus/Sandboxie/releases/latest)
+This fork builds and packages **Plus**. For the feature list, documentation and project history see
+[upstream's README](https://github.com/sandboxie-plus/Sandboxie/blob/master/README.md) and the
+[Sandboxie documentation](https://sandboxie-plus.github.io/sandboxie-docs).
 
-## ✨ Changelog
+---
 
-<a href='./CHANGELOG.md'>EN</a>
+## Download
 
-## 🚀 Features
+Installers are published on the [Releases page](../../releases). The rolling `nightly` tag always holds the
+build from the most recent successful CI run on `master`:
 
-Sandboxie is available in two editions, Plus and Classic. They both share the same core components, this means they have the same level of security and compatibility.
-What's different is the availability of features in the user interface.
+| Asset | For |
+| --- | --- |
+| `Sandboxie-Plus-x64-v<version>.exe` | 64-bit Intel/AMD |
+| `Sandboxie-Plus-arm64-v<version>.exe` | ARM64 |
+| `SHA256SUMS.txt` | Checksums for both |
 
-Sandboxie Plus has a modern Qt-based UI, which supports all new features that have been added since the project went open source:
+Verify the download before running it:
 
-  * Snapshot Manager - takes a copy of any box in order to be restored when needed
-  * Maintenance menu - allows to uninstall/install/start/stop Sandboxie driver and service when needed
-  * Portable mode - you can run the installer and choose to extract all files to a directory
-  * Additional UI options to block access to Windows components like printer spooler and clipboard
-  * More customization options for Start/Run and Internet access restrictions
-  * Privacy mode sandboxes that protect user data from illegitimate access
-  * Security enhanced sandboxes that restrict the availability of syscalls and endpoints
-  * Global hotkeys to suspend or terminate all boxed processes
-  * A network firewall per sandbox which supports Windows Filtering Platform (WFP)
-  * The list of sandboxes can be searched with the shortcut key Ctrl+F
-  * A search function for Global Settings and Sandbox Options
-  * Ability to import/export sandboxes to and from 7z files
-  * Integration of sandboxes into the Windows Start menu
-  * A browser compatibility wizard to create templates for unsupported browsers
-  * Vintage View mode to reproduce the graphical appearance of Sandboxie Control
-  * A troubleshooting wizard to assist users with their problems
-  * An Add-on manager to extend or add functionality via additional components
-  * Protections of sandboxes against the host, including the prevention of taking screenshots
-  * A trigger system to perform actions, when a sandbox goes through different stages, like initialization, box start, termination or file recovery
-  * Make a process not sandboxed, but its child processes sandboxed
-  * Force programs to automatically use a user-provided SOCKS5 proxy
-  * DNS control by blocking or redirecting
-  * Limit the amount of memory space a single process in the sandbox can occupy and the total amount of memory space all processes can occupy, and You can limit the total number of sandboxed processes per box
-  * A completely different token creation mechanism from Sandboxie's pre-open-source version makes sandboxes more independent in the system
-  * Encrypted Sandbox - an AES-based reliable data storage solution
-  * Prevent sandboxed programs from generating unnecessary unique identifier in the normal way
-  * An internal INI editor that aids the user with visual hints and tooltips on the settings they have configured or want to add
-  * The ability to configure an external text editor, beside the system default
-  * Control over the alpha transparency of the border
-  * A custom UAC-dialog, allowing to fake permission, grant them or cancel the elevation attempt
-  * Modern icons, while you can use the old-school ones in certain places
-  * You can change the font of the user interface
-  * Custom colors or icons can be used for sandboxes or groups
+```powershell
+Get-FileHash .\Sandboxie-Plus-x64-v1.18.2.exe -Algorithm SHA256
+type .\SHA256SUMS.txt
+```
 
-More features can be spotted by finding the sign `=` through the shortcut key Ctrl+F in the [CHANGELOG.md](./CHANGELOG.md) file.
+**Requirements:** Windows 7 or later, 64-bit. Administrator rights. Secure Boot and Memory Integrity must
+be turned off (see below) — if you are not willing to do that, use the upstream signed builds instead.
 
-Sandboxie Classic has the old no longer developed MFC-based UI, hence it lacks native interface support for Plus features. Although some of the missing features can be configured manually in the Sandboxie.ini configuration file or even replaced with [custom scripts](https://sandboxie-website-archive.github.io/www.sandboxie.com/old-forums/viewforum1a2d1a2d.html?f=22), the Classic edition is not recommended for users who want to explore the latest security options.
+---
 
-## 📚 Documentation
+## Why installation is not just "run the .exe"
 
-A GitHub copy of the [Sandboxie documentation](https://sandboxie-plus.github.io/sandboxie-docs) is currently maintained, although more volunteers are needed to keep it updated with the new changes. It is recommended to also check the following labels to track current issues: [Labels · sandboxie-plus/Sandboxie](https://github.com/sandboxie-plus/Sandboxie/labels).
+Sandboxie's core is `SbieDrv.sys`, a kernel-mode driver. 64-bit Windows refuses to load kernel drivers
+that are not signed by a certificate chaining to a root it trusts, and this fork has no such certificate.
 
-A partial archive of the [old Sandboxie forum](https://sandboxie-website-archive.github.io/www.sandboxie.com/old-forums) that was previously maintained by Invincea is still available. If you need to find something specific, it is possible to use the following search query: `site:https://sandboxie-website-archive.github.io/www.sandboxie.com/old-forums/`.
+Two details make it stricter than usual:
 
+- `Sandboxie/core/drv/SboxDrv.vcxproj` builds the driver with `/INTEGRITYCHECK`, which sets
+  `FORCE_INTEGRITY` in the PE header. Windows then validates the embedded signature on every load
+  *regardless* of the general driver-signature policy. So booting with "Disable driver signature
+  enforcement" is not a reliable shortcut here.
+- The driver needs `PsSetCreateProcessNotifyRoutineEx` (`core/drv/process.c`) and `ObRegisterCallbacks`
+  (`core/drv/obj_flt.c`), both of which require a signed, integrity-checked image.
 
-## 🚀 Useful tools for Sandboxie
+`bcdedit /set testsigning on` **on its own is not enough.** Test signing tells Windows to accept
+certificates that do not chain to a Microsoft root — it does not tell it to accept a certificate it has
+never seen. You need *both*: test signing enabled **and** the signing certificate trusted on the machine.
 
-Sandboxie's functionality can be enhanced with specialized tools like the following:
+Note that Safe Mode does **not** disable driver signature enforcement on 64-bit Windows; that is a
+different (and, as noted above, unreliable) boot option.
 
-  * [LogApiDll](https://github.com/sandboxie-plus/LogApiDll) - adds a verbose output to Sandboxie's trace log, listing invocations of relevant Windows API functions
-  * [SbieHide](https://github.com/VeroFess/SbieHide) - attempts to hide the presence of SbieDll.dll from the application being sandboxed
-  * [SandboxToys2](https://github.com/blap/SandboxToys2) - allows to monitor files and registry changes in a sandbox
-  * [Sbiextra](https://github.com/sandboxie-plus/sbiextra) - adds additional user mode restrictions to sandboxed processes
-  * [WrapLocale](https://github.com/UserUnknownFactor/WrapLocale) - provide more flexible locale pretending options than native LangId feature
+One thing works in your favour: Sandboxie disables its own internal caller-signature checks when the OS
+is in test-signing mode (`core/drv/util.c`, `MyIsCallerSigned`), so the unsigned user-mode binaries
+(`SandMan.exe`, `SbieSvc.exe`, `SbieDll.dll`, …) are fine as they are.
 
-<a id="project-history"></a>
-## 📌 Project history
+---
 
-|      Timeline       |    Maintainer    |
-|        :---         |       :---       |
-| 2004 - 2013         | Ronen Tzur       |
-| 2013 - 2017         | Invincea Inc.    |
-| 2017 - 2020         | Sophos Group plc |
-| 8 April 2020 - [open-source code](https://community.sophos.com/sandboxie/f/forum/119641/important-sandboxie-open-source-code-is-available-for-download) | Sophos Ltd. |
-| 9 April 2020 onwards - project fork | David Xanatos |
+## Installation
 
-Looking for older Sandboxie versions? Check the [version history](https://github.com/sandboxie-plus/sandboxie-old).
+Everything below runs from an **elevated** PowerShell prompt (right-click → *Run as administrator*).
 
-See the current [roadmap](https://www.wilderssecurity.com/threads/updated-sandboxie-plus-roadmap.456886/).
+### Step 1 — Turn off Secure Boot
 
-## 📌 Project support / sponsorship
+```powershell
+Confirm-SecureBootUEFI    # must report False
+```
 
-[<img align="left" height="64" width="64" src="./.github/images/binja-love.png">](https://binary.ninja/)
-Thank you [Vector 35](https://vector35.com/) for providing a [Binary Ninja](https://binary.ninja/) license to help with reverse engineering.
-<br>
-Binary Ninja is a multi-platform interactive disassembler, decompiler, and binary analysis tool for reverse engineers, malware analysts, vulnerability researchers, and software developers.<br>
-<br>
-[<img align="left" height="64" width="64" src="./.github/images/Icons8_logo.png">](https://icons8.de/)Thank you [Icons8](https://icons8.de/) for providing icons for the project.
-<br>
-<br>
-<br>
+If it reports `True`, reboot into UEFI/BIOS setup and disable Secure Boot. With Secure Boot on, step 3
+fails with *"The value is protected by Secure Boot policy"*. On legacy BIOS machines the cmdlet throws
+"not supported on this platform", which means Secure Boot is not in play — carry on.
 
-## 🤝 Support the project
+### Step 2 — Turn off Memory Integrity (HVCI)
 
-If you find Sandboxie useful, then feel free to contribute through our [Contribution guidelines](./CONTRIBUTING.md).
+Windows Security → *Device security* → *Core isolation* → turn **Memory integrity** off, or:
 
-## 📑 Helpful Contributors
+```powershell
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
+    /v Enabled /t REG_DWORD /d 0 /f
+```
 
-- DavidBerdik - Maintainer of [Sandboxie Website Archive](https://github.com/Sandboxie-Website-Archive/sandboxie-website-archive.github.io)
-- Jackenmen - Maintainer of Chocolatey packages for Sandboxie ([support](https://github.com/Jackenmen/choco-auto/issues?q=is%3Aissue+Sandboxie))
-- vedantmgoyal9 - Maintainer of Winget Releaser for Sandboxie ([support](https://github.com/vedantmgoyal9/winget-releaser/issues?q=is%3Aissue+Sandboxie))
-- blap - Maintainer of [SandboxToys2](https://github.com/blap/SandboxToys2) addon
-- diversenok - Security analysis & PoCs / Security fixes
-- TechLord - Team-IRA / Reversing
-- hg421 - Security analysis & PoCs / Code reviews
-- hx1997 - Security analysis & PoC
-- mpheath - Author of Plus installer / Code fixes / Collaborator
-- offhub - Documentation additions / Code fixes / Qt5 patch and build script / Collaborator
-- LumitoLuma - Qt5 patch and build script
-- QZLin - Author of [sandboxie-docs](https://sandboxie-plus.github.io/sandboxie-docs/) theme
-- isaak654 - Templates / Documentation / Code fixes / Collaborator
-- typpos - UI additions / Documentation / Code fixes
-- Yeyixiao - Feature additions
-- Deezzir - Feature additions
-- wzxjohn - Code fixes, Documentation additions
-- okrc - Code fixes
-- Sapour - Code fixes
-- lmou523 - Code fixes
-- sredna - Code fixes for Classic installer
-- weihongx9315 - Code fix
-- marti4d - Code fix
-- jorgectf - CodeQL workflow
-- stephtr - CI / Certification
-- yfdyh000 - Localization support for Plus installer
-- Dyras - Templates additions
-- cricri-pingouin - UI fixes
-- Valinwolf - UI / Icons
-- daveout - UI / Icons
-- kokofixcomputers - Support member of the [Discord](https://discord.gg/S4tFu6Enne) channel
-- NewKidOnTheBlock - Changelog fixes
-- Naeemh1 - Documentation additions
-- APMichael - Templates additions
-- 1mm0rt41PC - Documentation additions
-- Luro223 - Documentation additions
-- lwcorp - Documentation additions
-- wilders-soccerfan - Documentation additions
-- LepordCat - Documentation additions
-- stdedos - Documentation additions
-- habatake - UI additions, Code fixes
-- Polyester6719 - Documentation additions
+HVCI enforces a stricter signing policy that test-signed drivers do not satisfy. A reboot is required.
 
-## 🌏 Translators
+### Step 3 — Enable test signing
 
-- czoins - Arabic
-- yuhao2348732, 0x391F, nkh0472, yfdyh000, gexgd0419, Zerorigin, UnnamedOrange, DevSplash, Becods, okrc, 4rt3mi5, sepcnt, fzxx, Vstory, GT-Stardust, habatake, mihomoQ - Simplified Chinese
-- TragicLifeHu, Hulen, xiongsp, habatake, mihomoQ - Traditional Chinese
-- RockyTDR - Dutch
-- clexanis, Mmoi-Fr, hippalectryon-0, Monsieur Pissou - French (provided by email)
-- bastik-1001, APMichael - German
-- timinoun - Hungarian (provided by email)
-- isaak654, DerivativeOfLog7 - Italian
-- takahiro-itou, lllIIIlll - Japanese
-- VenusGirl - Korean
-- divinity76 - Norwegian Bokmål
-- 7zip, AndrzejRafalowski - Polish ([provided separately](https://forum.xanasoft.com/threads/polish-translation.4/page-2))
-- JNylson - Portuguese and Brazilian Portuguese
-- lufog, marat2509 - Russian
-- LumitoLuma, sebadamus - Spanish
-- 1FF, Thatagata - Swedish (provided by email or pull request)
-- xorcan, fmbxnary, offhub - Turkish
-- SuperMaxusa, lufog, Nazar1ky - Ukrainian
-- GunGunGun - Vietnamese
+```powershell
+bcdedit /set testsigning on
+bcdedit /enum "{current}" | Select-String testsigning   # should say Yes
+```
 
-All translators are encouraged to look at the [Localization notes and tips](https://github.com/sandboxie-plus/Sandboxie/discussions/1123) before sending a translation.
+Reboot. Windows will show a "Test Mode" watermark on the desktop from now on.
 
-## 📚 Documentation Translators
+### Step 4 — Trust the signing certificate
 
-- Vstory, GT-Stardust, wzxjohn, SOLEADO20, habatake - Simplified Chinese
+This is the step people miss. Which certificate you trust depends on how the build was signed — check it:
 
-All documentation translators are encouraged to look at the [Multilingual Translation Contribution Guide](https://github.com/sandboxie-plus/sandboxie-docs/issues/175#issuecomment-2840258519) before sending a translation.
+```powershell
+Get-AuthenticodeSignature .\SbieDrv.sys |
+    Select-Object Status,
+                  @{n='Subject';   e={$_.SignerCertificate.Subject}},
+                  @{n='Thumbprint';e={$_.SignerCertificate.Thumbprint}}
+```
+
+- **`CN=<your name>`** — a persistent certificate was configured for the build (see
+  [Signing your builds](#signing-your-builds)). Import it once and you are done for every future build.
+- **`CN=WDKTestCert <something>`** — no persistent certificate was configured, so the driver carries the
+  throwaway certificate the WDK generates on the build machine. It is **different for every build**, so
+  you have to repeat this step after every update.
+
+Either way, the certificate is embedded in the file, so you can import it straight from the driver:
+
+```powershell
+$sys  = 'C:\Program Files\Sandboxie-Plus\SbieDrv.sys'
+$cert = (Get-AuthenticodeSignature $sys).SignerCertificate
+
+foreach ($name in 'Root', 'TrustedPublisher') {
+    $store = Get-Item "Cert:\LocalMachine\$name"
+    $store.Open('ReadWrite')
+    $store.Add($cert)
+    $store.Close()
+}
+```
+
+Both stores are needed: `Root` so the chain validates, `TrustedPublisher` so the driver loads without a
+trust prompt. If you have the `.cer` file to hand instead, `Import-Certificate` does the same job:
+
+```powershell
+Import-Certificate -FilePath .\SbieSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\SbieSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+
+### Step 5 — Install
+
+```powershell
+.\Sandboxie-Plus-x64-v1.18.2.exe
+```
+
+If you trusted the certificate in step 4 *before* installing, the installer starts the driver and service
+itself and you are done.
+
+If you installed first and only then trusted the certificate — the usual case, since that is where
+`SbieDrv.sys` lands on disk — the driver failed to start during installation. Nothing is broken: the
+service entries were created, they just could not load. Start them now:
+
+```powershell
+& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieDrv
+& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieSvc
+```
+
+To get the driver on disk *before* installing, extract it in portable mode instead:
+
+```powershell
+.\Sandboxie-Plus-x64-v1.18.2.exe /PORTABLE=1 /DIR=C:\SbieExtract /VERYSILENT
+```
+
+Portable mode skips the driver and service installation entirely, so you get the files, trust the
+certificate from `C:\SbieExtract\SbieDrv.sys`, then run the installer normally.
+
+### Step 6 — Confirm it works
+
+```powershell
+sc.exe query SbieDrv     # STATE : 4  RUNNING
+sc.exe query SbieSvc     # STATE : 4  RUNNING
+```
+
+Then launch Sandboxie-Plus and run something in a box. `Get-AuthenticodeSignature` reporting `Valid` for
+`SbieDrv.sys` after step 4 is a good sign that the trust chain took.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Error 577` / *"Windows cannot verify the digital signature"* | Certificate not trusted, or test signing off | Redo steps 3 and 4 and reboot |
+| `SBIE1103 Sandboxie driver (SbieDrv) version … failed to start` | Same as above | Same as above |
+| `SBIE9153 Cannot start driver (SbieDrv)` | Same as above | Same as above |
+| `bcdedit` says *"protected by Secure Boot policy"* | Secure Boot still on | Step 1 |
+| Driver stops loading after a Windows update | Update re-enabled Memory Integrity, or reset the boot config | Re-check steps 2 and 3 |
+| Driver stops loading after installing a new nightly | Per-build WDK certificate changed | Repeat step 4, or set up a [persistent certificate](#signing-your-builds) |
+| *"Test Mode"* watermark on the desktop | Expected — test signing is on | Cosmetic; removable only by turning test signing off |
+
+To undo everything:
+
+```powershell
+bcdedit /set testsigning off
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
+    /v Enabled /t REG_DWORD /d 1 /f
+```
+
+Then re-enable Secure Boot in UEFI, uninstall Sandboxie-Plus, and remove the certificate from
+`Cert:\LocalMachine\Root` and `Cert:\LocalMachine\TrustedPublisher`.
+
+---
+
+## Signing your builds
+
+By default the driver keeps the throwaway `WDKTestCert` signature that the WDK generates on the CI runner.
+It is regenerated on every run, so you have to re-trust it after every build. Configuring a persistent
+certificate of your own means you trust it **once**.
+
+### 1. Create a self-signed code-signing certificate
+
+On macOS or Linux, with OpenSSL:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out SbieSigning.cer -days 3650 -nodes \
+  -subj "/CN=Sandboxie-Crack Local Build" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=critical,codeSigning" \
+  -addext "basicConstraints=critical,CA:FALSE"
+
+# 3DES/SHA-1 wrapping: OpenSSL 3's AES-256 default is not always readable by Windows CryptoAPI.
+openssl pkcs12 -export -out SbieSigning.pfx -inkey key.pem -in SbieSigning.cer \
+  -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1
+```
+
+On Windows, with PowerShell:
+
+```powershell
+$cert = New-SelfSignedCertificate `
+    -Type CodeSigningCert `
+    -Subject 'CN=Sandboxie-Crack Local Build' `
+    -KeyAlgorithm RSA -KeyLength 4096 `
+    -KeyExportPolicy Exportable `
+    -CertStoreLocation Cert:\CurrentUser\My `
+    -NotAfter (Get-Date).AddYears(10)
+
+$pw = Read-Host -AsSecureString 'PFX password'
+Export-PfxCertificate -Cert $cert -FilePath .\SbieSigning.pfx -Password $pw
+Export-Certificate    -Cert $cert -FilePath .\SbieSigning.cer
+```
+
+### 2. Add it to the repository secrets
+
+```bash
+base64 -i SbieSigning.pfx | tr -d '\n' | gh secret set SIGN_CERT_PFX --repo <owner>/<repo>
+gh secret set SIGN_CERT_PASSWORD --repo <owner>/<repo>    # paste the PFX password
+```
+
+On Windows:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes('.\SbieSigning.pfx')) | Set-Content .\pfx.b64 -NoNewline
+gh secret set SIGN_CERT_PFX --repo <owner>/<repo> < .\pfx.b64
+gh secret set SIGN_CERT_PASSWORD --repo <owner>/<repo>
+Remove-Item .\pfx.b64
+```
+
+Keep `SbieSigning.pfx` and `key.pem` out of the repository — they are the private key.
+
+### 3. Trust it on the machines you install on
+
+```powershell
+Import-Certificate -FilePath .\SbieSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\SbieSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+
+From the next build onwards the release workflow signs `SbieDrv.sys` and both installers with this
+certificate, and step 4 of the installation never has to be repeated. The release notes list the
+certificate subject and SHA-1 thumbprint so you can confirm which one a given build used.
+
+If the secrets are absent the workflow simply skips signing and says so in the log — nothing breaks.
+
+---
+
+## How releases are built
+
+Two workflows, and the second never recompiles anything:
+
+```
+push to master
+  └─ .github/workflows/main.yml  ("CI")
+       ├─ Build_x64_Qt6    → artifacts: Sandboxie_x64, Assets
+       └─ Build_ARM64_Qt6  → artifact:  Sandboxie_ARM64
+             │
+             └─ on success, workflow_run triggers
+                  .github/workflows/release.yml  ("Release")
+                    ├─ downloads those artifacts
+                    ├─ signs SbieDrv.sys (if a certificate is configured)
+                    ├─ compiles the installers with Inno Setup 6.3.3
+                    ├─ signs the installers
+                    └─ publishes them to the rolling `nightly` release
+```
+
+`Release` can also be run by hand from the Actions tab, or:
+
+```bash
+# package the latest successful CI run into the nightly release
+gh workflow run release.yml --repo <owner>/<repo> --ref master
+
+# package a specific CI run under a permanent tag
+gh workflow run release.yml --repo <owner>/<repo> --ref master \
+    -f run_id=32264345434 -f tag=v1.18.2
+```
+
+Passing a `tag` other than `nightly` produces a normal release instead of a rolling pre-release.
+
+The installer is compiled from `Installer/Sandboxie-Plus.iss`, with two directives disabled in a working
+copy of the script (the file in the repository is never modified):
+
+- `SignTool=sha256` — removed, because this pipeline signs with `signtool` directly rather than through
+  Inno Setup.
+- The optional *Install ImDisk 3.0* task — removed, because `imdisk_files.cab` and `imdisk_install.bat`
+  are third-party files that this repository does not produce. If they are ever added next to the `.iss`,
+  the workflow detects them and keeps the task enabled.
+
+---
+
+## Known limitations
+
+- **The in-app updater does not work.** `Sandboxie/common/verify.c` validates a sidecar `.sig` file against
+  a public key hardcoded in the source, so only builds signed with the upstream project's private key pass.
+  Update by downloading a new installer.
+- **No ImDisk 3.0 task**, as described above. Encrypted/RAM boxes that rely on ImBox still work.
+- **Test Mode watermark** stays on the desktop while test signing is enabled.
+- **Reduced platform security.** Secure Boot and HVCI protect against real attacks; turning them off to run
+  a self-signed kernel driver is a genuine trade-off. Do this on a machine where that is acceptable.
+
+---
+
+## Building from source
+
+Windows-only. See [`AGENTS.md`](./AGENTS.md) for the repository layout, and treat
+[`.github/workflows/main.yml`](./.github/workflows/main.yml) as the authoritative build reference —
+the per-component `ReadMe.md` files lag behind the current toolchain.
+
+In short: MSBuild plus the Windows SDK and WDK for the core (`Sandboxie/SandboxDll.sln`,
+`Sandboxie/Sandbox.sln`, `Sandboxie/SandboxDrv.sln`), qmake and Jom via
+`SandboxiePlus/qmake_plus.cmd` for the Qt UI, and `SandboxieTools/SandboxieTools.sln` for the tools.
+Dependency versions live in [`Installer/buildVariables.cmd`](./Installer/buildVariables.cmd).
+
+Note that building the project does **not** produce an installer: `Installer/copy_build.cmd` only
+assembles the binaries into `Installer/SbiePlus_x64`. Packaging happens in the `Release` workflow, which
+is the tested path — run it by hand as shown above rather than driving `ISCC.exe` yourself.
+
+---
+
+## Licensing and credits
+
+All application code, and all credit for it, belongs to the upstream project and its contributors —
+originally Ronen Tzur, then Invincea and Sophos, and since April 2020 the community fork led by
+David Xanatos. See upstream's
+[README](https://github.com/sandboxie-plus/Sandboxie/blob/master/README.md) for the full contributor,
+translator and sponsor lists.
+
+Dual-licensed, unchanged from upstream: [`LICENSE.Classic`](./LICENSE.Classic) (GPLv3) and
+[`LICENSE.Plus`](./LICENSE.Plus) (custom). Individual components carry their own licenses — see
+[`AGENTS.md`](./AGENTS.md#licensing) for the full list. Do not mix, remove or alter the copyright and
+license headers.
+
+Security issues in Sandboxie itself should be reported upstream following
+[`SECURITY.md`](./SECURITY.md), never in a public issue.

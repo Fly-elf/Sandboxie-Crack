@@ -150,6 +150,72 @@ jobs:
           Write-Host "Sandboxie-Plus version: $version"
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      # Optional persistent code-signing certificate.
+      #
+      # Without it the driver keeps the throwaway "WDKTestCert" signature the WDK
+      # generates on the build runner, which changes on every CI run and therefore
+      # has to be re-trusted on the target machine every time. Provide the repo
+      # secrets SIGN_CERT_PFX (base64 of a .pfx) and SIGN_CERT_PASSWORD to sign
+      # with a certificate you trust once and keep. See README.md.
+      - name: Sign the kernel driver
+        id: sign
+        shell: pwsh
+        env:
+          SIGN_CERT_PFX: ${{ secrets.SIGN_CERT_PFX }}
+          SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          if (-not $env:SIGN_CERT_PFX) {
+            Write-Host '::notice::SIGN_CERT_PFX secret not set - keeping the per-run WDK test signature on SbieDrv.sys.'
+            'signed=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $pfx = "$env:RUNNER_TEMP\signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_CERT_PFX.Trim()))
+
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+                      Where-Object { $_.Directory.Parent.Name -match '^\d+(\.\d+)+$' } |
+                      Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+                      Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found in the Windows SDK.' }
+          Write-Host "signtool: $($signtool.FullName)"
+
+          # SbieDrv.sys is built with /INTEGRITYCHECK (FORCE_INTEGRITY in the PE
+          # header), so the kernel validates this signature on every load.
+          $targets = Get-ChildItem "$env:STAGE\Release\*\SbieDrv.sys"
+          if (-not $targets) { throw 'No SbieDrv.sys found to sign.' }
+
+          $common = @('sign', '/fd', 'sha256', '/f', $pfx)
+          if ($env:SIGN_CERT_PASSWORD) { $common += @('/p', $env:SIGN_CERT_PASSWORD) }
+
+          foreach ($t in $targets) {
+            # Timestamping is best effort: it keeps the signature valid past the
+            # certificate's expiry, but must not break the build if unreachable.
+            & $signtool @common '/tr' 'http://timestamp.digicert.com' '/td' 'sha256' $t.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host '::warning::Timestamping failed, signing without a timestamp.'
+              & $signtool @common $t.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Failed to sign $($t.FullName)." }
+            }
+          }
+
+          # signtool verify would fail here: the runner does not trust this
+          # certificate either. Just confirm a signature is embedded.
+          $sig = Get-AuthenticodeSignature $targets[0].FullName
+          if (-not $sig.SignerCertificate) { throw 'No signature embedded after signing.' }
+          $subject    = $sig.SignerCertificate.Subject
+          $thumbprint = $sig.SignerCertificate.Thumbprint
+          Write-Host "Signed $($targets.Count) driver(s) with $subject ($thumbprint)"
+
+          'signed=true'                >> $env:GITHUB_OUTPUT
+          "subject=$subject"           >> $env:GITHUB_OUTPUT
+          "thumbprint=$thumbprint"     >> $env:GITHUB_OUTPUT
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+          "SIGN_PFX=$pfx"              >> $env:GITHUB_ENV
+
       - name: Patch the Inno Setup script
         shell: pwsh
         run: |
@@ -228,6 +294,27 @@ jobs:
             "/O$env:OUTDIR"
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed for ARM64.' }
 
+      - name: Sign the installers
+        if: steps.sign.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $common = @('sign', '/fd', 'sha256', '/f', $env:SIGN_PFX)
+          if ($env:SIGN_CERT_PASSWORD) { $common += @('/p', $env:SIGN_CERT_PASSWORD) }
+
+          foreach ($exe in Get-ChildItem "$env:OUTDIR\*.exe") {
+            & $env:SIGNTOOL @common '/tr' 'http://timestamp.digicert.com' '/td' 'sha256' $exe.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host '::warning::Timestamping failed, signing without a timestamp.'
+              & $env:SIGNTOOL @common $exe.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Failed to sign $($exe.Name)." }
+            }
+          }
+
       - name: Checksums
         shell: pwsh
         run: |
@@ -270,18 +357,51 @@ jobs:
           # No here-strings: their terminator must sit at column 0, which would
           # break out of the YAML block scalar.
           $bt = [char]96
+          $signed     = '${{ steps.sign.outputs.signed }}' -eq 'true'
+          $subject    = '${{ steps.sign.outputs.subject }}'
+          $thumbprint = '${{ steps.sign.outputs.thumbprint }}'
+
           $notes = @(
-            'Unsigned Sandboxie-Plus installer, packaged from CI artifacts - nothing is recompiled here.',
+            'Sandboxie-Plus installer packaged from CI artifacts - nothing is recompiled here.',
             '',
             '| | |',
             '|---|---|',
             "| Version | $bt$version$bt |",
             "| Source commit | $bt$sha$bt |",
-            "| CI run | $runUrl |",
+            "| CI run | $runUrl |"
+          )
+
+          if ($signed) {
+            $notes += "| Driver signed by | $bt$subject$bt |"
+            $notes += "| Certificate SHA-1 | $bt$thumbprint$bt |"
+            $notes += @(
+              '',
+              '### Before installing',
+              '',
+              'The kernel driver is signed with a self-issued certificate, so Windows needs to be told to trust it once:',
+              '',
+              '1. Turn Secure Boot off in UEFI and turn Memory Integrity off in Windows Security.',
+              '2. Run ``bcdedit /set testsigning on`` from an elevated prompt and reboot.',
+              '3. Import the signing certificate into ``LocalMachine\Root`` and ``LocalMachine\TrustedPublisher``.',
+              '',
+              "Step 3 only has to be repeated when the certificate itself changes (SHA-1 $bt$thumbprint$bt).",
+              'See the README for the exact commands.'
+            )
+          } else {
+            $notes += @(
+              '',
+              '### Before installing',
+              '',
+              'No persistent signing certificate was configured for this build, so the driver still carries the',
+              'throwaway WDK test certificate generated on the build runner. It is different for every build and',
+              'has to be re-trusted each time. See the README for how to set up a persistent certificate.'
+            )
+          }
+
+          $notes += @(
             '',
-            '**Neither the installer nor the SbieDrv.sys kernel driver is code-signed.** Install the driver manually with test signing / Safe Mode enabled, or it will refuse to load.',
-            '',
-            'The optional *Install ImDisk 3.0* task is not part of these builds.'
+            'The optional *Install ImDisk 3.0* task is not part of these builds, and the in-app updater is',
+            'disabled because it requires binaries signed with the upstream project key.'
           )
           Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notes -Encoding UTF8
 
@@ -303,3 +423,9 @@ jobs:
           $url = gh release view $tag --json url --jq '.url'
           Write-Host "Published: $url"
           "## Release published`n`n[$title]($url) - version ``$version`` from [CI run]($runUrl)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Remove the signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item "$env:RUNNER_TEMP\signing.pfx" -Force -ErrorAction SilentlyContinue
