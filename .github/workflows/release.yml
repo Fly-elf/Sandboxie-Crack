@@ -1,0 +1,305 @@
+name: Release
+
+# Packages the binaries produced by the "CI" workflow into an Inno Setup
+# installer and publishes it as a GitHub release. Nothing is recompiled here:
+# every input file comes from the artifacts of the referenced CI run.
+#
+# The installer is intentionally NOT code-signed (see "Patch the Inno Setup
+# script" below); the SbieDrv.sys kernel driver has to be installed manually
+# anyway on a machine that allows unsigned drivers.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'CI run ID to package (empty = latest successful CI run on master)'
+        required: false
+        default: ''
+      tag:
+        description: 'Release tag (empty = rolling "nightly" pre-release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # create/update the release and its tag
+  actions: read     # download artifacts from the CI run
+
+concurrency:
+  group: release-installer
+  cancel-in-progress: false
+
+env:
+  INNO_VERSION: '6.3.3'
+
+jobs:
+
+  Installer:
+    # workflow_run also fires on failed/cancelled CI runs, only package successful ones.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      STAGE: ${{ github.workspace }}\installer_build
+      OUTDIR: ${{ github.workspace }}\installer_out
+
+    steps:
+
+      - name: Resolve CI run
+        id: ci
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          if ('${{ github.event_name }}' -eq 'workflow_run') {
+            $runId = '${{ github.event.workflow_run.id }}'
+          }
+          elseif ('${{ inputs.run_id }}'.Trim()) {
+            $runId = '${{ inputs.run_id }}'.Trim()
+          }
+          else {
+            Write-Host 'No run_id given, looking up the latest successful CI run on master...'
+            $runId = gh run list --workflow main.yml --branch master --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+            if ($LASTEXITCODE -ne 0 -or -not $runId) { throw 'Could not find a successful CI run on master.' }
+          }
+
+          $info = gh run view $runId --json databaseId,headSha,headBranch,url,conclusion | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not read CI run $runId." }
+          if ($info.conclusion -ne 'success') { throw "CI run $runId did not succeed (conclusion: $($info.conclusion))." }
+
+          Write-Host "Packaging CI run $($info.databaseId) ($($info.headBranch) @ $($info.headSha))"
+          "run_id=$($info.databaseId)"   >> $env:GITHUB_OUTPUT
+          "run_url=$($info.url)"         >> $env:GITHUB_OUTPUT
+          "head_sha=$($info.headSha)"    >> $env:GITHUB_OUTPUT
+          "head_branch=$($info.headBranch)" >> $env:GITHUB_OUTPUT
+
+      # The .iss expects its sources under ".\Release\<MyAppSrc>\", relative to
+      # the directory holding the script, so download straight into that layout.
+      # Artifact roots map 1:1 onto Installer/SbiePlus_x64, Installer/SbiePlus_a64
+      # and Installer/Assets, because main.yml uploads them with a "<dir>/*" path.
+      - name: Download CI artifacts
+        id: artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $runId = '${{ steps.ci.outputs.run_id }}'
+
+          New-Item -ItemType Directory -Force -Path "$env:STAGE\Release" | Out-Null
+
+          gh run download $runId --name Sandboxie_x64 --dir "$env:STAGE\Release\SbiePlus_x64"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download the Sandboxie_x64 artifact.' }
+
+          gh run download $runId --name Assets --dir "$env:GITHUB_WORKSPACE\ci_assets"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download the Assets artifact.' }
+
+          # ARM64 is optional: main.yml can be re-run with only the x64 job.
+          gh run download $runId --name Sandboxie_ARM64 --dir "$env:STAGE\Release\SbiePlus_a64"
+          $hasArm64 = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          if (-not $hasArm64) {
+            Write-Host '::warning::No Sandboxie_ARM64 artifact in this run, skipping the ARM64 installer.'
+            Remove-Item -Recurse -Force "$env:STAGE\Release\SbiePlus_a64" -ErrorAction SilentlyContinue
+          }
+          "arm64=$($hasArm64.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+          # Sanity check: these are referenced by name in the [Files] section.
+          foreach ($f in 'SandMan.exe','SbieDrv.sys','SbieDrv.pdb','SbieDll.pdb','32\SbieDll.pdb') {
+            if (-not (Test-Path "$env:STAGE\Release\SbiePlus_x64\$f")) { throw "Missing x64 file: $f" }
+          }
+          if ($hasArm64) {
+            foreach ($f in 'SandMan.exe','SbieDrv.pdb','SbieDll.pdb','32\SbieDll.pdb','64\SbieDll.pdb') {
+              if (-not (Test-Path "$env:STAGE\Release\SbiePlus_a64\$f")) { throw "Missing ARM64 file: $f" }
+            }
+          }
+
+      # Installer/get_assets.cmd puts everything the .iss compiler needs
+      # (Sandboxie-Plus.iss, Languages.iss, license.txt, SandManInstall.ico,
+      # the .ini defaults and isl\) into Installer/Assets/Plus.
+      - name: Arrange installer sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $plus = "$env:GITHUB_WORKSPACE\ci_assets\Plus"
+          if (-not (Test-Path "$plus\Sandboxie-Plus.iss")) { throw 'Assets artifact has no Plus\Sandboxie-Plus.iss.' }
+
+          Copy-Item "$plus\*" -Destination $env:STAGE -Recurse -Force
+          Get-ChildItem $env:STAGE | Select-Object Mode, Length, Name | Format-Table | Out-String | Write-Host
+
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Read it off the built binary so the installer can never claim a
+          # version other than the one the CI run actually produced.
+          $exe = "$env:STAGE\Release\SbiePlus_x64\SandMan.exe"
+          if (-not (Test-Path $exe)) { $exe = "$env:STAGE\Release\SbiePlus_a64\SandMan.exe" }
+          $version = (Get-Item $exe).VersionInfo.FileVersion.Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "Unexpected SandMan.exe version string: '$version'" }
+          Write-Host "Sandboxie-Plus version: $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Patch the Inno Setup script
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $path = "$env:STAGE\Sandboxie-Plus.iss"
+          $iss  = Get-Content $path -Raw
+
+          # 1) Drop code signing. Sandboxie-Plus.iss carries "SignTool=sha256",
+          #    which makes ISCC abort unless a sign tool named "sha256" is
+          #    configured. We publish unsigned builds on purpose.
+          $iss = $iss -replace '(?m)^[ \t]*SignTool=.*\r?\n', ''
+          if ($iss -match '(?m)^[ \t]*SignTool=') { throw 'Failed to strip SignTool from the .iss.' }
+
+          # 2) ImDisk 3.0 is an optional, unchecked task in the x64 installer, but
+          #    imdisk_files.cab / imdisk_install.bat are third-party files that
+          #    neither this repo nor main.yml produces. Comment the directives out
+          #    when they are absent, otherwise ISCC fails on the missing sources.
+          $haveImDisk = (Test-Path "$env:STAGE\imdisk_files.cab") -and (Test-Path "$env:STAGE\imdisk_install.bat")
+          if ($haveImDisk) {
+            Write-Host 'ImDisk payload present, keeping the ImDisk task.'
+          } else {
+            Write-Host '::notice::imdisk_files.cab / imdisk_install.bat not available, disabling the optional ImDisk task.'
+            $iss = $iss -replace '(?m)^(Name:\s*"InstallImDisk".*)$',              ';$1'
+            $iss = $iss -replace '(?m)^(Source:\s*"\.\\imdisk_.*)$',               ';$1'
+            $iss = $iss -replace '(?m)^(Filename:\s*"\{app\}\\imdisk_install.*)$', ';$1'
+            if ($iss -match '(?m)^Source:.*imdisk')   { throw 'Failed to strip the ImDisk [Files] entries.' }
+            if ($iss -match '(?m)^Filename:.*imdisk') { throw 'Failed to strip the ImDisk [Run] entry.' }
+            if ($iss -match '(?m)^Name:\s*"InstallImDisk"') { throw 'Failed to strip the ImDisk [Tasks] entry.' }
+          }
+
+          # Keep the original UTF-8 BOM: Inno Setup uses it to pick the encoding.
+          Set-Content -Path $path -Value $iss -NoNewline -Encoding utf8BOM
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          choco install innosetup --version=$env:INNO_VERSION -y --no-progress --allow-downgrade
+          if ($LASTEXITCODE -notin 0, 3010) { throw "choco install innosetup failed ($LASTEXITCODE)." }
+
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup.' }
+
+          Write-Host "ISCC: $iscc"
+          "ISCC=$iscc" >> $env:GITHUB_ENV
+
+      - name: Build x64 installer
+        shell: pwsh
+        working-directory: ${{ github.workspace }}\installer_build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          & $env:ISCC "Sandboxie-Plus.iss" `
+            "/DMyAppVersion=${{ steps.ver.outputs.version }}" `
+            "/DMyAppArch=x64" `
+            "/DMyAppSrc=SbiePlus_x64" `
+            "/O$env:OUTDIR"
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed for x64.' }
+
+      - name: Build ARM64 installer
+        if: steps.artifacts.outputs.arm64 == 'true'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}\installer_build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          & $env:ISCC "Sandboxie-Plus.iss" `
+            "/DMyAppVersion=${{ steps.ver.outputs.version }}" `
+            "/DMyAppArch=arm64" `
+            "/DMyAppSrc=SbiePlus_a64" `
+            "/O$env:OUTDIR"
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed for ARM64.' }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $files = Get-ChildItem "$env:OUTDIR\*.exe"
+          if (-not $files) { throw 'ISCC produced no installer.' }
+          $files | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            Write-Host "$h  $($_.Name)  ($([math]::Round($_.Length / 1MB, 1)) MB)"
+            "$h  $($_.Name)"
+          } | Set-Content "$env:OUTDIR\SHA256SUMS.txt" -Encoding ASCII
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: Installer
+          path: ${{ github.workspace }}\installer_out\*
+          retention-days: 60
+
+      - name: Publish release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $version = '${{ steps.ver.outputs.version }}'
+          $sha     = '${{ steps.ci.outputs.head_sha }}'
+          $runUrl  = '${{ steps.ci.outputs.run_url }}'
+
+          $tag = '${{ inputs.tag }}'.Trim()
+          if (-not $tag) { $tag = 'nightly' }
+          $rolling = ($tag -eq 'nightly')
+
+          if ($rolling) {
+            $title = "Sandboxie-Plus v$version (nightly)"
+          } else {
+            $title = "Sandboxie-Plus v$version"
+          }
+
+          # No here-strings: their terminator must sit at column 0, which would
+          # break out of the YAML block scalar.
+          $bt = [char]96
+          $notes = @(
+            'Unsigned Sandboxie-Plus installer, packaged from CI artifacts - nothing is recompiled here.',
+            '',
+            '| | |',
+            '|---|---|',
+            "| Version | $bt$version$bt |",
+            "| Source commit | $bt$sha$bt |",
+            "| CI run | $runUrl |",
+            '',
+            '**Neither the installer nor the SbieDrv.sys kernel driver is code-signed.** Install the driver manually with test signing / Safe Mode enabled, or it will refuse to load.',
+            '',
+            'The optional *Install ImDisk 3.0* task is not part of these builds.'
+          )
+          Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notes -Encoding UTF8
+
+          # A rolling tag is recreated on every run so it always points at the
+          # commit the binaries were built from.
+          if ($rolling) {
+            gh release delete $tag --cleanup-tag --yes 2>$null
+            $global:LASTEXITCODE = 0
+            Start-Sleep -Seconds 5
+          }
+
+          $ghArgs = @('release','create',$tag,'--target',$sha,'--title',$title,'--notes-file',"$env:RUNNER_TEMP\notes.md")
+          if ($rolling) { $ghArgs += '--prerelease' }
+          $ghArgs += (Get-ChildItem "$env:OUTDIR\*" | ForEach-Object { $_.FullName })
+
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed for tag '$tag'." }
+
+          $url = gh release view $tag --json url --jq '.url'
+          Write-Host "Published: $url"
+          "## Release published`n`n[$title]($url) - version ``$version`` from [CI run]($runUrl)" >> $env:GITHUB_STEP_SUMMARY
