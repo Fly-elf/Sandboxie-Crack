@@ -182,7 +182,7 @@ _FX NTSTATUS Process_Api_Start(PROCESS *proc, ULONG64 *parms)
             box->fake_admin = (BOOLEAN)parms[3];
 
             if (!Process_NotifyProcess_Create(
-                                user_pid_parm, Api_ServiceProcessId, Api_ServiceProcessId, box)) {
+                                user_pid_parm, Api_ServiceProcessId, Api_ServiceProcessId, NULL, 0, box)) {
 
                 status = STATUS_INTERNAL_ERROR;
             }
@@ -391,6 +391,8 @@ _FX NTSTATUS Process_Api_QueryInfo(PROCESS *proc, ULONG64 *parms)
                     flags |= SBIE_FLAG_IMAGE_FROM_SANDBOX;
                 if (proc->in_pca_job)
                     flags |= SBIE_FLAG_PROCESS_IN_PCA_JOB;
+                if (proc->in_app_pkg)
+                    flags |= SBIE_FLAG_PROCESS_IN_APP_PKG;
 
                 if (proc->create_console_flag == 'S')
                     flags |= SBIE_FLAG_CREATE_CONSOLE_SHOW;

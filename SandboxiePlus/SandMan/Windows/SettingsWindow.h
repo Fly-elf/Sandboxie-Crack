@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QtWidgets/QMainWindow>
+#include <QMap>
 #include "ui_SettingsWindow.h"
+#include "PendingChanges.h"
 #include "../../MiscHelpers/Common/SettingsWidgets.h"
 
 void FixTriStateBoxPallete(QWidget* pWidget);
@@ -64,6 +66,8 @@ public:
 
 	void LoadCompletionConsent();
 	void SaveCompletionConsent();
+	QString localizedCompletionShortcut();
+	int ShowConsentDialog(); // Returns: 0=Unchecked, 1=PartiallyChecked(Basic), 2=Checked(Full)
 
 signals:
 	void OptionsChanged(bool bRebuildUI = false);
@@ -141,6 +145,7 @@ private slots:
 
 	void SetIniEdit(bool bEnable);
 	void OnEditIni();
+	void OnEditorSettings();
 	void OnIniValidationToggled(int state);
 	void OnTooltipToggled(int state);
 	void OnAutoCompletionToggled(int state);
@@ -197,6 +202,8 @@ protected:
 
 	bool	m_bRebuildUI;
 	bool	m_HoldChange;
+	CPendingChanges m_PendingChanges{this, &m_HoldChange, -1, true};
+	bool	m_SkipSaveOnToggle; // Skip saving to config when applying reset settings
 	int 	m_CompatLoaded;
 	QString m_NewPassword;
 	bool	m_MessagesChanged;
@@ -225,6 +232,8 @@ private:
 
 	bool m_IniValidationEnabled = true;
 	bool m_AutoCompletionConsent;
+	QMap<QString, int> m_WindowMonitorRawSettings;
+	QMap<QString, int> m_WindowMonitorResolvedFallback;
 };
 
 QVariantMap GetRunEntry(const QString& sEntry);

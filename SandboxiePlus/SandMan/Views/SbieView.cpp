@@ -11,6 +11,7 @@
 #include "../../MiscHelpers/Common/CheckableMessageBox.h"
 #include "../Windows/RecoveryWindow.h"
 #include "../Views/FileView.h"
+#include "../Views/NtObjectView.h"
 #include "../Wizards/NewBoxWizard.h"
 #include "../Helpers/WinHelper.h"
 #include "../Windows/BoxImageWindow.h"
@@ -18,6 +19,8 @@
 #include "../Windows/SettingsWindow.h"
 #include "../Windows/CompressDialog.h"
 #include "../Windows/ExtractDialog.h"
+#include "../Windows/RenameSandboxDialog.h"
+#include "../BoxTransfer.h"
 
 #include "qt_windows.h"
 #include "qwindowdefs_win.h"
@@ -30,6 +33,8 @@ CSbieView::CSbieView(QWidget* parent) : CPanelView(parent)
 	this->setLayout(m_pMainLayout);
 
 	m_HoldExpand = false;
+	m_MoveBatchPending = false;
+	m_MoveBatchChanged = false;
 
 	m_pSbieModel = new CSbieModel(this);
 	m_pSbieModel->SetTree(true);
@@ -47,7 +52,26 @@ CSbieView::CSbieView(QWidget* parent) : CPanelView(parent)
 	m_pSbieTree->setExpandsOnDoubleClick(false);
 	//m_pSbieTree->setItemDelegate(theGUI->GetItemDelegate());
 
+	QByteArray Columns = theConf->GetBlob("MainWindow/BoxTree_Columns");
+	if (Columns.isEmpty()) {
+		m_pSbieTree->setColumnWidth(CSbieModel::eName,      300);
+		m_pSbieTree->setColumnWidth(CSbieModel::eProcessId, 60);
+		m_pSbieTree->setColumnWidth(CSbieModel::eTitle,     70);
+		m_pSbieTree->setColumnWidth(CSbieModel::eStatus,    70);
+		m_pSbieTree->setColumnWidth(CSbieModel::eCPU,       60);
+		m_pSbieTree->setColumnWidth(CSbieModel::eMemory,    90);
+		m_pSbieTree->setColumnWidth(CSbieModel::ePrivBytes, 90);
+	} else
+		m_pSbieTree->restoreState(Columns);
+
 	m_pSbieTree->setModel(m_pSortProxy);
+
+	bool bShowResColumns = theConf->GetBool("Options/ShowResourceColumns", true);
+	if (!bShowResColumns) {
+		m_pSbieTree->SetColumnHidden(CSbieModel::eCPU,       true);
+		m_pSbieTree->SetColumnHidden(CSbieModel::eMemory,    true);
+		m_pSbieTree->SetColumnHidden(CSbieModel::ePrivBytes, true);
+	}
 
 	int iViewMode = theConf->GetInt("Options/ViewMode", 1);
 	int iLargeIcons = theConf->GetInt("Options/LargeIcons", 2);
@@ -65,8 +89,12 @@ CSbieView::CSbieView(QWidget* parent) : CPanelView(parent)
 	//m_pSbieTree->setSortingEnabled(false);
 	//m_pSbieTree->header()->setSortIndicatorShown(true);
 	//m_pSbieTree->header()->setSectionsClickable(true);
-	if(iViewMode != 2)
+	if (iViewMode != 2) {
 		connect(m_pSbieTree->header(), SIGNAL(sectionClicked(int)), this, SLOT(OnCustomSortByColumn(int)));
+		connect(m_pSbieTree->header(), SIGNAL(sectionClicked(int)), this, SLOT(OnHeaderChange()));
+		connect(m_pSbieTree->header(), SIGNAL(sectionMoved(int, int, int)), this, SLOT(OnHeaderChange()));
+		connect(m_pSbieTree->header(), SIGNAL(sectionResized(int, int, int)), this, SLOT(OnHeaderChange()));
+	}
 
 	QStyle* pStyle = QStyleFactory::create("windows");
 	m_pSbieTree->setStyle(pStyle);
@@ -115,14 +143,6 @@ CSbieView::CSbieView(QWidget* parent) : CPanelView(parent)
 	CreateGroupMenu();
 	CreateTrayMenu();
 
-	QByteArray Columns = theConf->GetBlob("MainWindow/BoxTree_Columns");
-	if (Columns.isEmpty()) {
-		m_pSbieTree->setColumnWidth(0, 300);
-		m_pSbieTree->setColumnWidth(1, 70);
-		m_pSbieTree->setColumnWidth(2, 70);
-		m_pSbieTree->setColumnWidth(3, 70);
-	} else
-		m_pSbieTree->restoreState(Columns);
 	if (theConf->GetBool("MainWindow/BoxTree_UseOrder", false) || iViewMode == 2)
 		SetCustomOrder();
 
@@ -155,7 +175,7 @@ void CSbieView::CreateMenu()
 {
 	m_pNewBox = m_pMenu->addAction(CSandMan::GetIcon("NewBox"), tr("Create New Box"), this, SLOT(OnGroupAction()));
 	m_pAddGroupe = m_pMenu->addAction(CSandMan::GetIcon("Group"), tr("Create Box Group"), this, SLOT(OnGroupAction()));
-	m_pImportBox = m_pMenu->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Box"), this, SLOT(OnGroupAction()));
+	m_pImportBox = m_pMenu->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Boxes"), this, SLOT(OnGroupAction()));
 	m_pImportBox->setEnabled(CArchive::IsInit());
 
 
@@ -242,11 +262,14 @@ void CSbieView::CreateMenu()
 		m_pMenuPresetsForce->setCheckable(true);
 	
 	m_pMenuTools = m_pMenuBox->addMenu(CSandMan::GetIcon("Maintenance"), tr("Sandbox Tools"));
+		m_pMenuBrowseNT = m_pMenuTools->addAction(CSandMan::GetIcon("Objects"), tr("Browse NT Namespace"), this, SLOT(OnSandBoxAction()));
+		m_pMenuTools->addSeparator();
 		m_pMenuDuplicate = m_pMenuTools->addAction(CSandMan::GetIcon("Duplicate"), tr("Duplicate Box Config"), this, SLOT(OnSandBoxAction()));
 		m_pMenuDuplicateEx = m_pMenuTools->addAction(CSandMan::GetIcon("Duplicate"), tr("Duplicate Box with Content"), this, SLOT(OnSandBoxAction()));
-		m_pMenuExport = m_pMenuTools->addAction(CSandMan::GetIcon("PackBox"), tr("Export Box"), this, SLOT(OnSandBoxAction()));
+		m_pMenuExport = m_pMenuTools->addAction(CSandMan::GetIcon("PackBox"), tr("Export Boxes"), this, SLOT(OnSandBoxAction()));
 		m_pMenuExport->setEnabled(CArchive::IsInit());
-
+	
+	m_pMenuBox->addSeparator();
 	m_pMenuRename = m_pMenuBox->addAction(CSandMan::GetIcon("Rename"), tr("Rename Sandbox"), this, SLOT(OnSandBoxAction()));
 	m_pMenuMoveTo = m_pMenuBox->addMenu(CSandMan::GetIcon("Group"), tr("Move Sandbox"));
 		m_pMenuMoveUp = m_pMenuMoveTo->addAction(CSandMan::GetIcon("Up"), tr("Move Up"), this, SLOT(OnGroupAction()));
@@ -323,7 +346,7 @@ void CSbieView::CreateOldMenu()
 {
 	m_pNewBox = m_pMenu->addAction(CSandMan::GetIcon("NewBox"), tr("Create New Box"), this, SLOT(OnGroupAction()));
 	m_pAddGroupe = m_pMenu->addAction(CSandMan::GetIcon("Group"), tr("Create Box Group"), this, SLOT(OnGroupAction()));
-	m_pImportBox = m_pMenu->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Box"), this, SLOT(OnGroupAction()));
+	m_pImportBox = m_pMenu->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Boxes"), this, SLOT(OnGroupAction()));
 	m_pImportBox->setEnabled(CArchive::IsInit());
 	
 
@@ -375,7 +398,8 @@ void CSbieView::CreateOldMenu()
 	m_pMenuTools = m_pMenuBox->addMenu(CSandMan::GetIcon("Maintenance"), tr("Sandbox Tools"));
 		m_pMenuBrowse = m_pMenuTools->addAction(CSandMan::GetIcon("Tree"), tr("Browse Content"), this, SLOT(OnSandBoxAction()));
 		m_pMenuSnapshots = m_pMenuTools->addAction(CSandMan::GetIcon("Snapshots"), tr("Snapshots Manager"), this, SLOT(OnSandBoxAction()));
-
+		m_pMenuTools->addSeparator();
+		m_pMenuBrowseNT = m_pMenuTools->addAction(CSandMan::GetIcon("Objects"), tr("Browse NT Namespace"), this, SLOT(OnSandBoxAction()));
 		m_pMenuTools->addSeparator();
 		m_pMenuDuplicate = m_pMenuTools->addAction(CSandMan::GetIcon("Duplicate"), tr("Duplicate Sandbox Config"), this, SLOT(OnSandBoxAction()));
 		m_pMenuDuplicateEx = m_pMenuTools->addAction(CSandMan::GetIcon("Duplicate"), tr("Duplicate Sandbox with Content"), this, SLOT(OnSandBoxAction()));
@@ -517,37 +541,53 @@ QString CSbieView__SerializeGroup(QMap<QString, QStringList>& m_Groups, const QS
 
 void CSbieView::Refresh()
 {
+	NormalizeGroups();
+
 	QList<QVariant> Added = m_pSbieModel->Sync(theAPI->GetAllBoxes(), m_Groups, theGUI->IsShowHidden());
 
-	if (m_pSbieModel->IsTree())
-	{
+	if (!Added.isEmpty())
 		QTimer::singleShot(10, this, [this, Added]() {
+			bool bAutoExpand = theGUI->IsAutoExpand();
+			bool bLegacyAutoExpand = theConf->GetBool("Options/LegacyAutoExpandTree", false);
+
 			foreach(const QVariant ID, Added) {
 
 				QModelIndex ModelIndex = m_pSbieModel->FindIndex(ID);
 
 				if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eProcess) {
-					m_HoldExpand = true;
-					m_pSbieTree->expand(m_pSortProxy->mapFromSource(ModelIndex));
-					m_HoldExpand = false;
-				}
-				else 
-				{
-					QString Name;
-					if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eGroup)
-						Name = m_pSbieModel->GetID(ModelIndex).toString();
-					else if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eBox)
-						Name = m_pSbieModel->GetSandBox(ModelIndex)->GetName();
-
-					if (!m_Collapsed.contains(Name)) {
+					CBoxedProcessPtr pProcess = m_pSbieModel->GetProcess(ModelIndex);
+					QString Key = GetProcessExpandKey(pProcess);
+					bool bExpand = m_ProcessExpandState.value(Key, bAutoExpand);
+					if (bExpand) {
 						m_HoldExpand = true;
 						m_pSbieTree->expand(m_pSortProxy->mapFromSource(ModelIndex));
+						m_HoldExpand = false;
+					}
+					else {
+						m_HoldExpand = true;
+						m_pSbieTree->collapse(m_pSortProxy->mapFromSource(ModelIndex));
+						m_HoldExpand = false;
+					}
+				}
+				else
+				{
+					bool bExpand = m_BoxExpandState.value(GetExpandStateKey(ModelIndex),
+						bLegacyAutoExpand ? true : bAutoExpand);
+					if (bExpand) {
+						m_HoldExpand = true;
+						m_pSbieTree->expand(m_pSortProxy->mapFromSource(ModelIndex));
+						m_HoldExpand = false;
+					}
+					else {
+						m_HoldExpand = true;
+						m_pSbieTree->collapse(m_pSortProxy->mapFromSource(ModelIndex));
 						m_HoldExpand = false;
 					}
 				}
 			}
 		});
-	}
+
+	CleanupProcessExpandState();
 
 	// add new boxes to the default group
 
@@ -559,7 +599,7 @@ void CSbieView::Refresh()
 	if (!Added.isEmpty()) {
 		bool bChanged = false;
 		foreach(const QVariant& ID, Added) {
-			if (ID.type() == QVariant::String) {
+			if (ID.metaType().id() == QMetaType::QString) {
 				QString id = ID.toString();
 				if (id.left(1) != "!") {
 					bChanged = true;
@@ -575,7 +615,7 @@ void CSbieView::Refresh()
 
 void CSbieView::OnToolTipCallback(const QVariant& ID, QString& ToolTip)
 {
-	if (ID.type() == QVariant::String)
+	if (ID.metaType().id() == QMetaType::QString)
 	{
 		QString BoxName = ID.toString();
 		CSandBoxPtr pBox = theAPI->GetBoxByName(BoxName);
@@ -583,21 +623,32 @@ void CSbieView::OnToolTipCallback(const QVariant& ID, QString& ToolTip)
 		if (!pBoxEx)
 			return;
 
-		// todo more info
-
-		ToolTip = BoxName + "\n";
-		ToolTip += tr("    File root: %1\n").arg(pBoxEx->GetFileRoot());
-		ToolTip += tr("    Registry root: %1\n").arg(pBoxEx->GetRegRoot());
-		ToolTip += tr("    IPC root: %1\n").arg(pBoxEx->GetIpcRoot());
-		if(!pBoxEx->GetMountRoot().isEmpty())
-			ToolTip += tr("    Disk root: %1\n").arg(pBoxEx->GetMountRoot());
-		
-		ToolTip += tr("Options:\n    ");
-		ToolTip += pBoxEx->GetStatusStr().replace(", ", "\n    ");
+		ToolTip = pBoxEx->GetBoxToolTip();
 	}
 	else if (quint32 ProcessId = ID.toUInt())
 	{
-		// todo proc info
+		CBoxedProcessPtr pProcess = theAPI->GetProcessById(ProcessId);
+		if (pProcess.isNull())
+			return;
+
+		ToolTip = QString("%1 (PID: %2)\n").arg(pProcess->GetProcessName()).arg(ProcessId);
+
+		QModelIndex srcIdx = m_pSbieModel->FindIndex(ProcessId);
+		if (srcIdx.isValid()) {
+			QString cpuStr  = m_pSbieModel->data(m_pSbieModel->index(srcIdx.row(), CSbieModel::eCPU, srcIdx.parent()), Qt::DisplayRole).toString();
+			QString memStr  = m_pSbieModel->data(m_pSbieModel->index(srcIdx.row(), CSbieModel::eMemory, srcIdx.parent()), Qt::DisplayRole).toString();
+			QString privStr = m_pSbieModel->data(m_pSbieModel->index(srcIdx.row(), CSbieModel::ePrivBytes, srcIdx.parent()), Qt::DisplayRole).toString();
+			if (!cpuStr.isEmpty() || !memStr.isEmpty())
+				ToolTip += tr("    CPU: %1  |  Memory: %2  |  Private Bytes: %3\n").arg(cpuStr, memStr, privStr);
+		}
+
+		CSandBoxPtr pBox = theAPI->GetBoxByName(pProcess->GetBoxName());
+		ToolTip += tr("    Sandbox: %1\n").arg(pBox ? CSandMan::GetBoxDisplayName(pBox) : pProcess->GetBoxName());
+		if (!pProcess->GetFileName().isEmpty())
+			ToolTip += tr("    Image: %1\n").arg(pProcess->GetFileName());
+		QDateTime startTime = pProcess->GetTimeStamp();
+		if (startTime.isValid())
+			ToolTip += tr("    Start Time: %1\n").arg(startTime.toString("yyyy-MM-dd hh:mm:ss"));
 	}
 }
 
@@ -610,9 +661,10 @@ void CSbieView::OnCustomSortByColumn(int column)
 		if (m_pSortProxy->sortRole() == Qt::InitialSortOrderRole) {
 			m_pSortProxy->sort(0, Qt::AscendingOrder);
 			m_pSortProxy->setSortRole(Qt::EditRole);
-			theConf->SetValue("MainWindow/BoxTree_UseOrder", false);
+			m_pSbieTree->header()->setSortIndicator(0, Qt::AscendingOrder);
 			m_pSbieTree->header()->setSortIndicatorShown(true);
-		} else if (order == Qt::DescendingOrder) {
+			theConf->SetValue("MainWindow/BoxTree_UseOrder", false);
+		} else if (order == Qt::AscendingOrder) {
 			SetCustomOrder();
 			theConf->SetValue("MainWindow/BoxTree_UseOrder", true);
 		}
@@ -620,7 +672,13 @@ void CSbieView::OnCustomSortByColumn(int column)
 	else {
 		m_pSortProxy->setSortRole(Qt::EditRole);
 		m_pSbieTree->header()->setSortIndicatorShown(true);
+		theConf->SetValue("MainWindow/BoxTree_UseOrder", false);
 	}
+}
+
+void CSbieView::OnHeaderChange()
+{
+	SaveState();
 }
 
 bool CSbieView::UpdateMenu(bool bAdvanced, const CSandBoxPtr &pBox, int iSandBoxeCount, bool bBoxBusy, bool bBoxNotMounted)
@@ -662,7 +720,12 @@ bool CSbieView::UpdateMenu(bool bAdvanced, const CSandBoxPtr &pBox, int iSandBox
 		iSandBoxeCount = 0;
 
 	m_pMenuMkLink->setEnabled(iSandBoxeCount == 1);
-	m_pMenuTools->setEnabled(iSandBoxeCount == 1);
+
+	//m_pMenuTools->setEnabled(iSandBoxeCount == 1)
+	m_pMenuBrowseNT->setEnabled(iSandBoxeCount == 1);
+	m_pMenuDuplicate->setEnabled(iSandBoxeCount == 1);
+	m_pMenuDuplicateEx->setEnabled(iSandBoxeCount == 1);
+
 	m_pMenuUnmount->setVisible(pBoxEx && pBoxEx->UseImageFile() && !pBoxEx->GetMountRoot().isEmpty());
 	m_pMenuRecover->setEnabled(iSandBoxeCount == 1);
 	m_pMenuCleanUp->setEnabled(iSandBoxeCount > 0);
@@ -942,8 +1005,16 @@ void CSbieView::RenameItem(const QString OldName, const QString NewName)
 	theConf->DelValue("SizeCache/" + OldName);
 	if(Size != -1) theConf->SetValue("SizeCache/" + NewName, Size);
 
-	if (m_Collapsed.remove(OldName))
-		m_Collapsed.insert(NewName);
+	bool ExpandStateChanged = false;
+	foreach(const QString& Prefix, QStringList() << "g|" << "b|") {
+		QString OldKey = Prefix + OldName;
+		if (m_BoxExpandState.contains(OldKey)) {
+			m_BoxExpandState.insert(Prefix + NewName, m_BoxExpandState.take(OldKey));
+			ExpandStateChanged = true;
+		}
+	}
+	if (ExpandStateChanged && theConf->GetInt("Options/BoxGroupHandling", 0) == 0)
+		SaveBoxExpandState();
 
 	for (auto I = m_Groups.begin(); I != m_Groups.end(); ++I)
 	{
@@ -999,19 +1070,50 @@ void CSbieView::OnGroupAction()
 
 void CSbieView::OnGroupAction(QAction* Action)
 {
-	if (Action == m_pNewBox || Action == m_pAddGroupe || Action == m_pImportBox)
-	{
-		QStringList List = GetSelectedGroups();
+	QStringList FocusBoxes = GetSelectedBoxNames();
+	QStringList FocusGroups = GetSelectedGroups();
+	QStringList FocusNames;
+	QStringList DeleteMovedBoxes;
+	bool bRestoreFocus = false;
+	bool bRestoreNameFocus = false;
+	bool bRestoreRootFocus = false;
 
-		QString Name = Action == m_pNewBox ? AddNewBox() : (Action == m_pImportBox ? ImportSandbox() : AddNewGroup());
+	if (Action == m_pNewBox || Action == m_pAddGroupe)
+	{
+		QString TargetGroup;
+		QStringList SelectedGroups = GetSelectedGroups();
+		if (!SelectedGroups.isEmpty())
+			TargetGroup = SelectedGroups.first();
+
+		QString Name = Action == m_pNewBox ? AddNewBox() : AddNewGroup();
 		if (Name.isEmpty())
 			return;
 
-		if (List.isEmpty())
+		if (!TargetGroup.isEmpty() && TargetGroup != Name)
+			MoveItem(Name, TargetGroup);
+
+		if (Action == m_pAddGroupe) {
+			bRestoreNameFocus = true;
+			FocusNames.append(Name);
+		}
+	}
+	else if (Action == m_pImportBox)
+	{
+		QString TargetGroup;
+		QStringList SelectedGroups = GetSelectedGroups();
+		if (!SelectedGroups.isEmpty())
+			TargetGroup = SelectedGroups.first();
+
+		QStringList BoxNames = ImportMultiBoxes(theGUI);
+		if (BoxNames.isEmpty())
 			return;
-		m_Groups[""].removeAll(Name);
-		m_Groups[List.first()].removeAll(Name);
-		m_Groups[List.first()].append(Name);
+
+		if (!TargetGroup.isEmpty())
+			foreach(const QString& Name, BoxNames)
+				MoveItem(Name, TargetGroup);
+
+		bRestoreFocus = true;
+		FocusBoxes = BoxNames;
 	}
 	else if (Action == m_pRenGroupe)
 	{
@@ -1028,11 +1130,17 @@ void CSbieView::OnGroupAction(QAction* Action)
 			return;
 
 		RenameGroup(OldValue, Value);
+		bRestoreNameFocus = true;
+		FocusNames.append(Value);
 	}
 	else if (Action == m_pDelGroupe)
 	{
 		if (QMessageBox("Sandboxie-Plus", tr("Do you really want to remove the selected group(s)?"), QMessageBox::Question, QMessageBox::Yes, QMessageBox::No | QMessageBox::Default | QMessageBox::Escape, QMessageBox::NoButton, this).exec() != QMessageBox::Yes)
 			return;
+
+		QStringList SelectedGroups = GetSelectedGroups();
+		QString PrimaryDeletedGroup = SelectedGroups.isEmpty() ? QString() : SelectedGroups.first();
+		QString ParentGroup = PrimaryDeletedGroup.isEmpty() ? QString() : FindParent(PrimaryDeletedGroup);
 
 		foreach(const QModelIndex& Index, m_pSbieTree->selectedRows())
 		{
@@ -1042,6 +1150,12 @@ void CSbieView::OnGroupAction(QAction* Action)
 				QString Group = m_pSbieModel->GetID(ModelIndex).toString();
 
 				QStringList Items = m_Groups.take(Group); // remove group
+				if (Group == PrimaryDeletedGroup) {
+					foreach(const QString& Name, Items) {
+						if (!theAPI->GetBoxByName(Name).isNull() && !DeleteMovedBoxes.contains(Name))
+							DeleteMovedBoxes.append(Name);
+					}
+				}
 		
 				// remove from parents
 				for (auto I = m_Groups.begin(); I != m_Groups.end(); ++I) {
@@ -1051,12 +1165,31 @@ void CSbieView::OnGroupAction(QAction* Action)
 						break;
 					}
 				}
-				m_Collapsed.remove(Group);
+				m_BoxExpandState.remove("g|" + Group);
+				if (theConf->GetInt("Options/BoxGroupHandling", 0) == 0)
+					SaveBoxExpandState();
 			}
+		}
+
+		if (!ParentGroup.isEmpty() && m_Groups.contains(ParentGroup)) {
+			bRestoreNameFocus = true;
+			FocusNames.append(ParentGroup);
+		}
+		else if (!DeleteMovedBoxes.isEmpty()) {
+			bRestoreFocus = true;
+			FocusBoxes = DeleteMovedBoxes;
+		}
+		else {
+			bRestoreRootFocus = true;
 		}
 	}
 	else if (Action == m_pMenuMoveUp /*|| Action == m_pMenuMoveBy*/ || Action == m_pMenuMoveDown)
 	{
+		bRestoreFocus = true;
+		if (FocusBoxes.isEmpty() && !FocusGroups.isEmpty()) {
+			bRestoreNameFocus = true;
+			FocusNames = FocusGroups;
+		}
 		if (!theConf->GetBool("MainWindow/BoxTree_UseOrder", false)) {
 			SetCustomOrder();
 			theConf->SetValue("MainWindow/BoxTree_UseOrder", true);
@@ -1111,6 +1244,11 @@ void CSbieView::OnGroupAction(QAction* Action)
 	}
 	else // move to group
 	{
+		bRestoreFocus = true;
+		if (FocusBoxes.isEmpty() && !FocusGroups.isEmpty()) {
+			bRestoreNameFocus = true;
+			FocusNames = FocusGroups;
+		}
 		OnMoveTo(Action->data().toString());
 	}
 
@@ -1122,10 +1260,34 @@ void CSbieView::OnGroupAction(QAction* Action)
 	UpdateMoveMenu();
 
 	SaveBoxGrouping();
+
+	if (bRestoreFocus)
+		RestoreBoxSelectionLater(FocusBoxes);
+	if (bRestoreNameFocus && !FocusNames.isEmpty()) {
+		RestoreNameSelectionLater(FocusNames);
+	}
+	if (bRestoreRootFocus) {
+		QTimer::singleShot(50, this, [this]() {
+			m_pSbieTree->clearSelection();
+			QModelIndex First = m_pSortProxy->index(0, 0);
+			if (First.isValid()) {
+				m_pSbieTree->setCurrentIndex(First);
+				m_pSbieTree->setFocus(Qt::OtherFocusReason);
+				m_pSbieTree->scrollTo(First, QAbstractItemView::PositionAtTop);
+			}
+			else {
+				m_pSbieTree->setFocus(Qt::OtherFocusReason);
+				m_pSbieTree->scrollToTop();
+			}
+		});
+	}
 }
 
 void CSbieView::OnMoveTo(QTreeWidgetItem* pItem)
 {
+	QStringList FocusBoxes = GetSelectedBoxNames();
+	QStringList FocusNames = GetSelectedGroups();
+
 	OnMoveTo(pItem->data(0, Qt::UserRole).toString());
 
 	m_pCurMenu->close();
@@ -1136,6 +1298,9 @@ void CSbieView::OnMoveTo(QTreeWidgetItem* pItem)
 	UpdateMoveMenu();
 
 	SaveBoxGrouping();
+
+	RestoreBoxSelectionLater(FocusBoxes);
+	RestoreNameSelectionLater(FocusNames);
 }
 
 void CSbieView::OnMoveTo(const QString& Group)
@@ -1191,92 +1356,35 @@ QString CSbieView::AddNewBox(bool bAlowTemp)
 	if (!BoxName.isEmpty()) {
 		theAPI->ReloadBoxes();
 		Refresh();
-		SelectBox(BoxName);
+		// Two things prevent a direct SelectBox() call from working here:
+		//
+		// 1. The proxy model (QSortFilterProxyModel with dynamicSortFilter=true) reacts to
+		//    layoutChanged from the source model by resetting itself via beginResetModel/
+		//    endResetModel. The view's QAbstractItemView::reset() is called synchronously,
+		//    which in turn calls scheduleDelayedItemsLayout() – a 0 ms QBasicTimer that
+		//    recomputes the layout and scrolls back to the top.
+		//    Qt docs explicitly state: "the ordering between zero timers and other sources
+		//    of events is unspecified", so a singleShot(0) for SelectBox races with this
+		//    0 ms layout-reset timer and can lose.
+		//
+		// 2. Refresh() already queues a singleShot(10 ms) to expand newly-added items.
+		//    Expanding items recomputes the row layout and shifts the scroll position,
+		//    undoing any scrollTo() that ran before it.
+		//
+		// Solution: use a > 10 ms real timer so that:
+		//   – the layout-reset (0 ms timer) has already fired and scrolled to top,
+		//   – the singleShot(10 ms) expansion inside Refresh() has already fired,
+		//   – SelectBox() runs last and wins.
+		QTimer::singleShot(50, this, [this, BoxName]() {
+			SelectBox(BoxName);
+		});
 	}
 	return BoxName;
 }
 
-QString CSbieView::ImportSandbox()
+void CSbieView::AddNewBoxAction()
 {
-	QString Path = QFileDialog::getOpenFileName(this, tr("Select file name"), "", tr("7-Zip Archive (*.7z);;Zip Archive (*.zip)"));
-	if (Path.isEmpty())
-		return "";
-
-	QString Password;
-	quint64 ImageSize = 0;
-	
-	CArchive Archive(Path);
-	int Ret = Archive.Open();
-	if (Ret == ERR_7Z_PASSWORD_REQUIRED) {
-		for (;;) {
-			CBoxImageWindow window(CBoxImageWindow::eImport, this);
-			if (!theGUI->SafeExec(&window) == 1)
-				return "";
-			Archive.SetPassword(window.GetPassword());
-			Ret = Archive.Open();
-			if (Ret != ERR_7Z_OK) {
-				QMessageBox::critical(this, "Sandboxie-Plus", tr("Failed to open archive, wrong password?"));
-				continue;
-			}
-			Password = window.GetPassword();
-			ImageSize = window.GetImageSize();
-			break;
-		}
-	}
-	if (Ret != ERR_7Z_OK) {
-		QMessageBox::critical(this, "Sandboxie-Plus", tr("Failed to open archive (%1)!").arg(Ret));
-		return "";
-	}
-	Archive.Close();
-
-	StrPair PathName = Split2(Path, "/", true);
-	StrPair NameEx = Split2(PathName.second, ".", true);
-	QString Name = NameEx.first;
-	
-	CExtractDialog optWnd(Name, this);
-	if(!Password.isEmpty())
-		optWnd.ShowNoCrypt();
-	if (!theGUI->SafeExec(&optWnd) == 1)
-		return "";
-	Name = optWnd.GetName();
-	QString BoxRoot = optWnd.GetRoot();
-
-	CSandBoxPtr pBox;
-	SB_PROGRESS Status = theAPI->CreateBox(Name);
-	if (!Status.IsError()) {
-		pBox = theAPI->GetBoxByName(Name);
-		if (pBox) {
-
-			auto pBoxEx = pBox.objectCast<CSandBoxPlus>();
-
-			if (!BoxRoot.isEmpty())
-				pBox->SetFileRoot(BoxRoot);
-
-			if (!Password.isEmpty() && !optWnd.IsNoCrypt()) {
-				Status = pBoxEx->ImBoxCreate(ImageSize / 1024, Password);
-				if (!Status.IsError())
-					Status = pBoxEx->ImBoxMount(Password, true, true);
-			}
-
-			if (!Status.IsError())
-				Status = pBoxEx->ImportBox(Path, Password);
-
-			// always overwrite restored FileRootPath
-			pBox->SetText("FileRootPath", BoxRoot);
-		}
-	}
-
-	if (Status.GetStatus() == OP_ASYNC) {
-		Status = theGUI->AddAsyncOp(Status.GetValue(), true, tr("Importing: %1").arg(Path));
-		if (Status.IsError()) {
-			theGUI->DeleteBoxContent(pBox, CSandMan::eForDelete);
-			pBox->RemoveBox();
-		}
-	}
-	else
-		theGUI->CheckResults(QList<SB_STATUS>() << Status, this);
-
-	return Name;
+	OnGroupAction(m_pNewBox);
 }
 
 QString CSbieView::AddNewGroup()
@@ -1288,19 +1396,23 @@ QString CSbieView::AddNewGroup()
 		return "";
 
 	m_Groups[Name] = QStringList();
-
-	QModelIndex ModelIndex = m_pSortProxy->mapToSource(m_pSbieTree->currentIndex());
-	QString Parent;
-	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eGroup)
-		Parent = m_pSbieModel->GetID(ModelIndex).toString();
-
-	m_Groups[Parent].append(Name);
+	m_Groups[""].append(Name);
 
 	UpdateMoveMenu();
 
 	SaveBoxGrouping();
 
 	return Name;
+}
+
+void CSbieView::AddNewGroupAction()
+{
+	OnGroupAction(m_pAddGroupe);
+}
+
+void CSbieView::ImportBoxesAction()
+{
+	OnGroupAction(m_pImportBox);
 }
 
 bool CSbieView::TestNameAndWarn(const QString& Name)
@@ -1435,6 +1547,12 @@ void CSbieView::OnSandBoxAction(QAction* Action, const QList<CSandBoxPtr>& SandB
 		ShowOptions(SandBoxes.first());
 	else if (Action == m_pMenuBrowse)
 		ShowBrowse(SandBoxes.first());
+	else if (Action == m_pMenuBrowseNT)
+	{
+		CNtObjectBrowserWindow* pBrowserWindow = new CNtObjectBrowserWindow(SandBoxes.first());
+		connect(theGUI, SIGNAL(Closed()), pBrowserWindow, SLOT(close()));
+		CSandMan::SafeShow(pBrowserWindow);
+	}
 	else if (Action == m_pMenuRefresh)
 	{
 		foreach(const CSandBoxPtr& pBox, SandBoxes)
@@ -1510,28 +1628,15 @@ void CSbieView::OnSandBoxAction(QAction* Action, const QList<CSandBoxPtr>& SandB
 	}
 	else if (Action == m_pMenuSnapshots)
 	{
-		CSandBoxPtr pBox = SandBoxes.first();
-
-		static QMap<void*, CSnapshotsWindow*> SnapshotWindows;
-		CSnapshotsWindow* pSnapshotsWindow = SnapshotWindows.value(pBox.data());
-		if (pSnapshotsWindow == NULL) {
-			pSnapshotsWindow = new CSnapshotsWindow(SandBoxes.first(), this);
-			connect(theGUI, SIGNAL(Closed()), pSnapshotsWindow, SLOT(close()));
-			SnapshotWindows.insert(pBox.data(), pSnapshotsWindow);
-			connect(pSnapshotsWindow, &CSnapshotsWindow::Closed, [this, pBox]() {
-				SnapshotWindows.remove(pBox.data());
-			});
-			CSandMan::SafeShow(pSnapshotsWindow);
-		}
-		else {
-			pSnapshotsWindow->setWindowState((pSnapshotsWindow->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
-			SetForegroundWindow((HWND)pSnapshotsWindow->winId());
-		}
+		ShowSnapshots(SandBoxes.first());
 	}
 	else if (Action == m_pMenuDuplicate || Action == m_pMenuDuplicateEx)
 	{
 		CSandBoxPtr pSrcBox = theAPI->GetBoxByName(SandBoxes.first()->GetName());
 		if (!pSrcBox) return;
+		QString sourceGroup = FindParent(pSrcBox->GetName());
+		QString sourceAlias = pSrcBox->GetText("BoxAlias");
+		bool sourceAliasActive = !sourceAlias.isEmpty() && pSrcBox->GetText("BoxAliasDisabled").isEmpty();
 
 		QString OldValue = pSrcBox->GetName().replace("_", " ");
 		QString Value = QInputDialog::getText(this, "Sandboxie-Plus", tr("Please enter a new name for the duplicated Sandbox."), QLineEdit::Normal, tr("%1 Copy").arg(OldValue));
@@ -1555,85 +1660,104 @@ void CSbieView::OnSandBoxAction(QAction* Action, const QList<CSandBoxPtr>& SandB
 			pDestBox = theAPI->GetBoxByName(Name);
 			if(!pDestBox)
 				Status = SB_ERR(SB_FailedCopyConf, QVariantList() << SandBoxes.first()->GetName() << tr("Not Created"));
+			else {
+				if (sourceAliasActive) {
+					QString copiedAlias = tr("%1 Copy").arg(sourceAlias);
+					pDestBox->SetText("BoxAlias", copiedAlias);
+					pDestBox->DelValue("BoxAliasDisabled");
+				}
+				MoveItem(Name, sourceGroup);
+				SaveBoxGrouping();
+			}
 		}
 
 		if (Action == m_pMenuDuplicateEx && !Status.IsError())
 		{
 			auto pSrcBoxEx = pSrcBox.objectCast<CSandBoxPlus>();
-			SB_PROGRESS Progress = pSrcBoxEx->CopyBox(pDestBox->GetFileRoot());
+			if (!pSrcBoxEx)
+				Status = SB_ERR(SB_FailedCopyConf, QVariantList() << SandBoxes.first()->GetName() << tr("Not Created"));
+			SB_PROGRESS Progress = pSrcBoxEx ? pSrcBoxEx->CopyBox(pDestBox->GetFileRoot()) : SB_PROGRESS(Status);
 
 			if (Progress.GetStatus() == OP_ASYNC)
 				Status = theGUI->AddAsyncOp(Progress.GetValue(), false, tr("Copying: %1").arg(Value));
 			else
 				Status = Progress;
 		}
+
+		if (!Status.IsError()) {
+			Refresh();
+			RestoreBoxSelectionLater(QStringList() << Name);
+		}
 		
 		Results.append(Status);
 	}
 	else if (Action == m_pMenuExport)
 	{
-		CSandBoxPtr pBox = SandBoxes.first();
-		auto pBoxEx = pBox.objectCast<CSandBoxPlus>();
-
-		CCompressDialog optWnd(this);
-		if (pBoxEx->UseImageFile())
-			optWnd.SetMustEncrypt();
-		if (!theGUI->SafeExec(&optWnd) == 1)
-			return;
-
-		QString Password;
-		if (optWnd.UseEncryption()) {
-			CBoxImageWindow pwWnd(CBoxImageWindow::eExport, this);
-			if (!theGUI->SafeExec(&pwWnd) == 1)
-				return;
-			Password = pwWnd.GetPassword();
-		}
-
-		QString Path = QFileDialog::getSaveFileName(this, tr("Select file name"), SandBoxes.first()->GetName() + optWnd.GetFormat(), tr("7-Zip Archive (*.7z);;Zip Archive (*.zip)"));
-		if (Path.isEmpty())
-			return;
-
-		SB_PROGRESS Status = pBoxEx->ExportBox(Path, Password, optWnd.GetLevel(), optWnd.MakeSolid());
-		if (Status.GetStatus() == OP_ASYNC)
-			theGUI->AddAsyncOp(Status.GetValue(), false, tr("Exporting: %1").arg(Path));
-		else
-			Results.append(Status);
+		ExportMultiBoxes(this, SandBoxes);
 	}
 	else if (Action == m_pMenuRename)
 	{
 		auto pBox = SandBoxes.first();
-		QString OldValue = pBox->GetName().replace("_", " ");
-		QString Alias = pBox->GetText("BoxAlias");
-		bool bAlias = false;
-		if (bAlias = !Alias.isEmpty())
-			OldValue = Alias;
-		bool bOk = false;
-		QString Value = QInputDialog::getText(this, "Sandboxie-Plus", bAlias ? tr("Please enter a new alias for the Sandbox.") : tr("Please enter a new name for the Sandbox."), QLineEdit::Normal, OldValue, &bOk);
-		if (!bOk || Value == OldValue)
-			return;
-		if (!Value.isEmpty() && !TestNameAndWarn(Value))
+		QString oldNameDisplay = pBox->GetName().replace("_", " ");
+		QString oldAliasDisabledValue = pBox->GetText("BoxAliasDisabled");
+		QString oldAliasNormalValue = pBox->GetText("BoxAlias");
+		QString oldAlias = !oldAliasDisabledValue.isEmpty() ? oldAliasDisabledValue : oldAliasNormalValue;
+		bool oldAliasDisabled = !oldAliasDisabledValue.isEmpty();
+		bool hasAliasSetting = !oldAliasDisabledValue.isEmpty() || !oldAliasNormalValue.isEmpty();
+
+		CRenameSandboxDialog dlg(oldNameDisplay, oldAlias, oldAliasDisabled, hasAliasSetting, this);
+		if (theGUI->SafeExec(&dlg) != QDialog::Accepted)
 			return;
 
-		bool bError = false;
-		if (bAlias || (bError = CSbieAPI::ValidateName(QString(Value).replace(" ", "_")).IsError()))
+		QString newNameDisplay = dlg.GetBoxName();
+		QString newAlias = dlg.GetAlias();
+		bool newAliasDisabled = dlg.IsAliasDisabled();
+
+		if (newNameDisplay.isEmpty())
+			return;
+
+		QString oldName = oldNameDisplay.replace(" ", "_");
+		QString newName = newNameDisplay.replace(" ", "_");
+
+		if (newName.compare(oldName, Qt::CaseInsensitive) != 0)
 		{
-			if (!bAlias && QMessageBox::question(this, "Sandboxie-Plus", tr("The entered name is not valid, do you want to set it as an alias instead?"), QMessageBox::Yes, QMessageBox::No) != QMessageBox::Yes)
+			if (!TestNameAndWarn(newNameDisplay))
 				return;
-			if (Value.isEmpty()) pBox->DelValue("BoxAlias");
-			else pBox->SetText("BoxAlias", Value);
-			pBox->UpdateDetails();
+			SB_STATUS validateStatus = CSbieAPI::ValidateName(newName);
+			if (validateStatus.IsError()) {
+				theGUI->CheckResults(QList<SB_STATUS>() << validateStatus, this);
+				return;
+			}
 		}
-		else
+
+		if (newAlias.isEmpty()) {
+			pBox->DelValue("BoxAlias");
+			pBox->DelValue("BoxAliasDisabled");
+		}
+		else if (newAliasDisabled) {
+			pBox->DelValue("BoxAlias");
+			pBox->SetText("BoxAliasDisabled", newAlias);
+		}
+		else {
+			pBox->SetText("BoxAlias", newAlias);
+			pBox->DelValue("BoxAliasDisabled");
+		}
+
+		if (newName.compare(oldName, Qt::CaseInsensitive) != 0)
 		{
-			SB_STATUS Status = pBox->RenameBox(Value.replace(" ", "_"));
+			SB_STATUS Status = pBox->RenameBox(newName);
 			if (!Status.IsError())
 			{
-				RenameItem(OldValue.replace(" ", "_"), Value.replace(" ", "_"));
-				if (theAPI->GetGlobalSettings()->GetText("DefaultBox", "DefaultBox").compare(OldValue.replace(" ", "_"), Qt::CaseInsensitive) == 0)
-					theAPI->GetGlobalSettings()->SetText("DefaultBox", Value.replace(" ", "_"));
+				RenameItem(oldName, newName);
+				if (theAPI->GetGlobalSettings()->GetText("DefaultBox", "DefaultBox").compare(oldName, Qt::CaseInsensitive) == 0)
+					theAPI->GetGlobalSettings()->SetText("DefaultBox", newName);
+				Refresh();
+				RestoreBoxSelectionLater(QStringList() << newName);
 			}
 			Results.append(Status);
 		}
+		else
+			pBox->UpdateDetails();
 
 		SaveBoxGrouping();
 	}
@@ -1685,7 +1809,9 @@ void CSbieView::OnSandBoxAction(QAction* Action, const QList<CSandBoxPtr>& SandB
 
 			if (!Status.IsError()) {
 				theConf->DelValue("SizeCache/" + Name);
-				m_Collapsed.remove(Name);
+				m_BoxExpandState.remove("b|" + Name);
+				if (theConf->GetInt("Options/BoxGroupHandling", 0) == 0)
+					SaveBoxExpandState();
 				for (auto I = m_Groups.begin(); I != m_Groups.end(); ++I)
 				{
 					if (I.value().removeOne(Name)) {
@@ -1992,7 +2118,8 @@ void CSbieView::OnDoubleClicked(const QModelIndex& index)
 	CSandBoxPtr pBox = m_pSbieModel->GetSandBox(ModelIndex);
 
 	if (index.column() == CSbieModel::ePath) {
-		OnSandBoxAction(m_pMenuExplore, QList<CSandBoxPtr>() << pBox);
+		if (!pBox.isNull())
+			OnSandBoxAction(m_pMenuExplore, QList<CSandBoxPtr>() << pBox);
 		return;
 	}
 
@@ -2203,6 +2330,32 @@ void CSbieView::OnMenuContextAction()
 	}
 }
 
+static QIcon CSbieView__GetCachedWindowsIcon(const QString& iconFile, int iconIndex, QMap<QString, QIcon>& cache)
+{
+	QString cacheKey = iconFile + "|" + QString::number(iconIndex);
+	auto it = cache.constFind(cacheKey);
+	if (it != cache.constEnd())
+		return it.value();
+
+	QIcon icon;
+	if (QFile::exists(iconFile))
+		icon = LoadWindowsIcon(iconFile, iconIndex);
+
+	cache.insert(cacheKey, icon);
+	return icon;
+}
+
+static QIcon CSbieView__GetCachedFileIcon(const QString& filePath, QFileIconProvider& iconProvider, QMap<QString, QIcon>& cache)
+{
+	auto it = cache.constFind(filePath);
+	if (it != cache.constEnd())
+		return it.value();
+
+	QIcon icon = iconProvider.icon(QFileInfo(filePath));
+	cache.insert(filePath, icon);
+	return icon;
+}
+
 void CSbieView::UpdateStartMenu(CSandBoxPlus* pBoxEx)
 {
 	foreach(const CSandBoxPlus::SLink& Link, pBoxEx->GetStartMenu())
@@ -2214,12 +2367,11 @@ void CSbieView::UpdateStartMenu(CSandBoxPlus* pBoxEx)
 		if(Link.IconIndex == -1)
 			Icon = theGUI->GetIcon("Internet");
 		else if (!Link.Icon.isEmpty()) {
-			if(QFile::exists(Link.Icon))
-				Icon = LoadWindowsIcon(Link.Icon, Link.IconIndex);
-			else 
+			Icon = CSbieView__GetCachedWindowsIcon(Link.Icon, Link.IconIndex, m_RunMenuWinIconCache);
+			if (Icon.isNull())
 				Icon = theGUI->GetIcon("File");
 		}
-		if (Icon.isNull()) Icon = m_IconProvider.icon(QFileInfo(Link.Target));
+		if (Icon.isNull()) Icon = CSbieView__GetCachedFileIcon(Link.Target, m_IconProvider, m_RunMenuFileIconCache);
 		pAction->setIcon(Icon);
 		QString Command;
 		if(Link.Target.contains(" "))
@@ -2280,12 +2432,11 @@ void CSbieView::UpdateRunMenu(const CSandBoxPtr& pBox)
 		if(IconIndex == -1)
 			Icon = theGUI->GetIcon("Internet");
 		else if (!IconFile.isEmpty()) {
-			if(QFile::exists(IconFile))
-				Icon = LoadWindowsIcon(IconFile, IconIndex);
-			else 
+			Icon = CSbieView__GetCachedWindowsIcon(IconFile, IconIndex, m_RunMenuWinIconCache);
+			if (Icon.isNull())
 				Icon = theGUI->GetIcon("File");
 		}
-		if (Icon.isNull()) Icon = m_IconProvider.icon(QFileInfo(CmdFile));
+		if (Icon.isNull()) Icon = CSbieView__GetCachedFileIcon(CmdFile, m_IconProvider, m_RunMenuFileIconCache);
 		pAction->setIcon(Icon);
 		pAction->setData(Entry["Command"].toString());
 		pAction->setProperty("Icon", IconFile);
@@ -2315,7 +2466,11 @@ void CSbieView::SelectBox(const QString& Name)
 		Refresh();
 
 	QModelIndex Index = m_pSbieModel->FindIndex(Name);
+	if (!Index.isValid())
+		return;
 	QModelIndex ModelIndex = m_pSortProxy->mapFromSource(Index);
+	if (!ModelIndex.isValid())
+		return;
 
 	QModelIndex ModelL = m_pSortProxy->index(ModelIndex.row(), 0, ModelIndex.parent());
 	QModelIndex ModelR = m_pSortProxy->index(ModelIndex.row(), m_pSortProxy->columnCount() - 1, ModelIndex.parent());
@@ -2324,8 +2479,204 @@ void CSbieView::SelectBox(const QString& Name)
 	SelectedItems.append(QItemSelectionRange(ModelL, ModelR));
 
 	m_pSbieTree->setCurrentIndex(ModelIndex);
+	m_pSbieTree->setFocus(Qt::OtherFocusReason);
 	m_pSbieTree->scrollTo(ModelL);
 	m_pSbieTree->selectionModel()->select(SelectedItems, QItemSelectionModel::ClearAndSelect);
+}
+
+void CSbieView::SelectBoxes(const QStringList& Names)
+{
+	if (Names.size() == 1) {
+		SelectBox(Names.first());
+		return;
+	}
+
+	if (m_pSbieModel->Count() == 0)
+		Refresh();
+
+	QItemSelection SelectedItems;
+	QModelIndex FirstModelIndex;
+	QList<QPersistentModelIndex> SelectedIndexes;
+
+	foreach (const QString& Name, Names)
+	{
+		QModelIndex Index = m_pSbieModel->FindIndex(Name);
+		if (!Index.isValid())
+			continue;
+
+		QModelIndex ModelIndex = m_pSortProxy->mapFromSource(Index);
+		if (!ModelIndex.isValid())
+			continue;
+
+		if (!FirstModelIndex.isValid())
+			FirstModelIndex = ModelIndex;
+		SelectedIndexes.append(QPersistentModelIndex(ModelIndex));
+
+		QModelIndex ModelL = m_pSortProxy->index(ModelIndex.row(), 0, ModelIndex.parent());
+		QModelIndex ModelR = m_pSortProxy->index(ModelIndex.row(), m_pSortProxy->columnCount() - 1, ModelIndex.parent());
+		SelectedItems.append(QItemSelectionRange(ModelL, ModelR));
+	}
+
+	if (!FirstModelIndex.isValid() || SelectedItems.isEmpty() || SelectedIndexes.isEmpty())
+		return;
+
+	m_pSbieTree->setCurrentIndex(FirstModelIndex);
+	m_pSbieTree->setFocus(Qt::OtherFocusReason);
+	m_pSbieTree->scrollTo(FirstModelIndex, QAbstractItemView::PositionAtCenter);
+	m_pSbieTree->selectionModel()->select(SelectedItems, QItemSelectionModel::ClearAndSelect);
+
+	// Keep the full multi-selection in view when possible.
+	QTimer::singleShot(0, this, [this, SelectedIndexes]() {
+		if (SelectedIndexes.isEmpty())
+			return;
+
+		int Top = INT_MAX;
+		int Bottom = INT_MIN;
+		int Count = 0;
+		QModelIndex TopIndex;
+		QModelIndex BottomIndex;
+
+		foreach (const QPersistentModelIndex& PIndex, SelectedIndexes) {
+			if (!PIndex.isValid())
+				continue;
+			QRect Rect = m_pSbieTree->visualRect(PIndex);
+			if (!Rect.isValid() || Rect.isEmpty())
+				continue;
+			if (Rect.top() < Top) {
+				Top = Rect.top();
+				TopIndex = PIndex;
+			}
+			if (Rect.bottom() > Bottom) {
+				Bottom = Rect.bottom();
+				BottomIndex = PIndex;
+			}
+			Count++;
+		}
+
+		if (Count == 0)
+			return;
+
+		int ViewHeight = m_pSbieTree->viewport()->height();
+		if (Top >= 0 && Bottom < ViewHeight)
+			return;
+
+		if (TopIndex.isValid())
+			m_pSbieTree->scrollTo(TopIndex, QAbstractItemView::PositionAtTop);
+		if (BottomIndex.isValid())
+			m_pSbieTree->scrollTo(BottomIndex, QAbstractItemView::PositionAtBottom);
+	});
+}
+
+void CSbieView::SelectNames(const QStringList& Names)
+{
+	if (Names.isEmpty())
+		return;
+
+	if (m_pSbieModel->Count() == 0)
+		Refresh();
+
+	QItemSelection SelectedItems;
+	QModelIndex FirstModelIndex;
+	QList<QPersistentModelIndex> SelectedIndexes;
+
+	foreach (const QString& Name, Names)
+	{
+		QModelIndex Index = m_pSbieModel->FindIndex(Name); // box
+		if (!Index.isValid())
+			Index = m_pSbieModel->FindIndex("!" + Name); // group
+		if (!Index.isValid())
+			continue;
+
+		QModelIndex ModelIndex = m_pSortProxy->mapFromSource(Index);
+		if (!ModelIndex.isValid())
+			continue;
+
+		if (!FirstModelIndex.isValid())
+			FirstModelIndex = ModelIndex;
+		SelectedIndexes.append(QPersistentModelIndex(ModelIndex));
+
+		QModelIndex ModelL = m_pSortProxy->index(ModelIndex.row(), 0, ModelIndex.parent());
+		QModelIndex ModelR = m_pSortProxy->index(ModelIndex.row(), m_pSortProxy->columnCount() - 1, ModelIndex.parent());
+		SelectedItems.append(QItemSelectionRange(ModelL, ModelR));
+	}
+
+	if (!FirstModelIndex.isValid() || SelectedItems.isEmpty() || SelectedIndexes.isEmpty())
+		return;
+
+	m_pSbieTree->setCurrentIndex(FirstModelIndex);
+	m_pSbieTree->setFocus(Qt::OtherFocusReason);
+	m_pSbieTree->scrollTo(FirstModelIndex, QAbstractItemView::PositionAtCenter);
+	m_pSbieTree->selectionModel()->select(SelectedItems, QItemSelectionModel::ClearAndSelect);
+
+	QTimer::singleShot(0, this, [this, SelectedIndexes]() {
+		if (SelectedIndexes.isEmpty())
+			return;
+
+		int Top = INT_MAX;
+		int Bottom = INT_MIN;
+		int Count = 0;
+		QModelIndex TopIndex;
+		QModelIndex BottomIndex;
+
+		foreach (const QPersistentModelIndex& PIndex, SelectedIndexes) {
+			if (!PIndex.isValid())
+				continue;
+			QRect Rect = m_pSbieTree->visualRect(PIndex);
+			if (!Rect.isValid() || Rect.isEmpty())
+				continue;
+			if (Rect.top() < Top) {
+				Top = Rect.top();
+				TopIndex = PIndex;
+			}
+			if (Rect.bottom() > Bottom) {
+				Bottom = Rect.bottom();
+				BottomIndex = PIndex;
+			}
+			Count++;
+		}
+
+		if (Count == 0)
+			return;
+
+		int ViewHeight = m_pSbieTree->viewport()->height();
+		if (Top >= 0 && Bottom < ViewHeight)
+			return;
+
+		if (TopIndex.isValid())
+			m_pSbieTree->scrollTo(TopIndex, QAbstractItemView::PositionAtTop);
+		if (BottomIndex.isValid())
+			m_pSbieTree->scrollTo(BottomIndex, QAbstractItemView::PositionAtBottom);
+	});
+}
+
+QStringList CSbieView::GetSelectedBoxNames()
+{
+	QStringList FocusBoxes;
+	foreach (const QString& Name, GetSelectedGroups(true)) {
+		if (!theAPI->GetBoxByName(Name).isNull() && !FocusBoxes.contains(Name))
+			FocusBoxes.append(Name);
+	}
+	return FocusBoxes;
+}
+
+void CSbieView::RestoreBoxSelectionLater(const QStringList& Names, int Delay)
+{
+	if (Names.isEmpty())
+		return;
+
+	QTimer::singleShot(Delay, this, [this, Names]() {
+		SelectBoxes(Names);
+	});
+}
+
+void CSbieView::RestoreNameSelectionLater(const QStringList& Names, int Delay)
+{
+	if (Names.isEmpty())
+		return;
+
+	QTimer::singleShot(Delay, this, [this, Names]() {
+		SelectNames(Names);
+	});
 }
 
 void CSbieView::PopUpMenu(const QString& Name)
@@ -2364,33 +2715,177 @@ void CSbieView::ChangeExpand(const QModelIndex& index, bool bExpand)
 
 	QModelIndex ModelIndex = m_pSortProxy->mapToSource(index);
 
-	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eProcess)
+	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eProcess) {
+		QString Key = GetProcessExpandKey(m_pSbieModel->GetProcess(ModelIndex));
+		if (!Key.isEmpty()) {
+			m_ProcessExpandState.insert(Key, bExpand);
+			SaveProcessExpandState();
+		}
+		return;
+	}
+
+	QString Key = GetExpandStateKey(ModelIndex);
+	if (!Key.isEmpty()) {
+		m_BoxExpandState.insert(Key, bExpand);
+		SaveBoxExpandState();
+	}
+}
+
+void CSbieView::ShowSnapshots(const CSandBoxPtr& pBox)
+{
+	if (pBox.isNull())
 		return;
 
-	QString Name;
+	static QMap<void*, CSnapshotsWindow*> SnapshotWindows;
+	CSnapshotsWindow* pSnapshotsWindow = SnapshotWindows.value(pBox.data());
+	if (pSnapshotsWindow == NULL) {
+		pSnapshotsWindow = new CSnapshotsWindow(pBox, this);
+		connect(theGUI, SIGNAL(Closed()), pSnapshotsWindow, SLOT(close()));
+		SnapshotWindows.insert(pBox.data(), pSnapshotsWindow);
+		connect(pSnapshotsWindow, &CSnapshotsWindow::Closed, [pBox]() {
+			SnapshotWindows.remove(pBox.data());
+		});
+		CSandMan::SafeShow(pSnapshotsWindow);
+	}
+	else {
+		pSnapshotsWindow->Refresh();
+		pSnapshotsWindow->setWindowState((pSnapshotsWindow->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+		SetForegroundWindow((HWND)pSnapshotsWindow->winId());
+	}
+}
+
+void CSbieView::SetAutoExpand(bool bExpand, bool bLegacy)
+{
+	if (bLegacy) {
+		if (bExpand)
+			m_pSbieTree->expandAll();
+		else
+			m_pSbieTree->collapseAll();
+		return;
+	}
+
+	m_HoldExpand = true;
+	ApplyExpandState(bExpand);
+	m_HoldExpand = false;
+}
+
+void CSbieView::ApplyExpandState(bool bDefaultExpand, const QModelIndex& Parent)
+{
+	for (int Row = 0; Row < m_pSortProxy->rowCount(Parent); ++Row) {
+		QModelIndex Index = m_pSortProxy->index(Row, 0, Parent);
+		QModelIndex ModelIndex = m_pSortProxy->mapToSource(Index);
+
+		bool bExpand;
+		if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eProcess) {
+			QString Key = GetProcessExpandKey(m_pSbieModel->GetProcess(ModelIndex));
+			bExpand = m_ProcessExpandState.value(Key, bDefaultExpand);
+		}
+		else
+			bExpand = m_BoxExpandState.value(GetExpandStateKey(ModelIndex), bDefaultExpand);
+
+		m_pSbieTree->setExpanded(Index, bExpand);
+		ApplyExpandState(bDefaultExpand, Index);
+	}
+}
+
+QString CSbieView::GetExpandStateKey(const QModelIndex& ModelIndex) const
+{
+	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eProcess) {
+		QString Key = GetProcessExpandKey(m_pSbieModel->GetProcess(ModelIndex));
+		return Key.isEmpty() ? QString() : "p|" + Key;
+	}
 	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eGroup)
-		Name = m_pSbieModel->GetID(ModelIndex).toString();
-	else if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eBox)
-		Name = m_pSbieModel->GetSandBox(ModelIndex)->GetName();
+		return "g|" + m_pSbieModel->GetID(ModelIndex).toString();
+	if (m_pSbieModel->GetType(ModelIndex) == CSbieModel::eBox)
+		return "b|" + m_pSbieModel->GetSandBox(ModelIndex)->GetName();
+	return QString();
+}
 
-	if(bExpand)
-		m_Collapsed.remove(Name);
+QString CSbieView::GetProcessExpandKey(const CBoxedProcessPtr& pProcess) const
+{
+	if (pProcess.isNull() || !pProcess->GetTimeStamp().isValid())
+		return QString();
+
+	return QString("%1|%2|%3").arg(pProcess->GetBoxName())
+		.arg(pProcess->GetProcessId()).arg(pProcess->GetTimeStamp().toMSecsSinceEpoch());
+}
+
+void CSbieView::SaveBoxExpandState()
+{
+	if (m_BoxExpandState.isEmpty()) {
+		theConf->DelValue("UIConfig/BoxTreeState");
+		theConf->DelValue("UIConfig/BoxCollapsedView");
+		return;
+	}
+
+	QStringList State;
+	QSet<QString> Collapsed;
+	for (auto I = m_BoxExpandState.constBegin(); I != m_BoxExpandState.constEnd(); ++I) {
+		State.append(QString(I.value() ? "e|" : "c|") + I.key());
+		if (!I.value())
+			Collapsed.insert(I.key().mid(2));
+	}
+	State.sort();
+	theConf->SetValue("UIConfig/BoxTreeState", State);
+	if (Collapsed.isEmpty())
+		theConf->DelValue("UIConfig/BoxCollapsedView");
 	else
-		m_Collapsed.insert(Name);
+		theConf->SetValue("UIConfig/BoxCollapsedView", SetToList(Collapsed).join(","));
+}
 
-	//QMap<QString, QStringList> Collapsed;
-	//Collapsed.insert("", SetToList(m_Collapsed));
-	//theAPI->GetUserSettings()->SetTextMap("CollapsedBoxes", Collapsed);
+void CSbieView::SaveProcessExpandState()
+{
+	if (m_ProcessExpandState.isEmpty()) {
+		theConf->DelValue("UIConfig/ProcessTreeState");
+		return;
+	}
 
-	QString Collapsed = SetToList(m_Collapsed).join(",");
-	theConf->SetValue("UIConfig/BoxCollapsedView", Collapsed);
+	QStringList State;
+	for (auto I = m_ProcessExpandState.constBegin(); I != m_ProcessExpandState.constEnd(); ++I)
+		State.append(QString(I.value() ? "e|" : "c|") + I.key());
+	State.sort();
+	theConf->SetValue("UIConfig/ProcessTreeState", State);
+}
+
+void CSbieView::CleanupProcessExpandState()
+{
+	if (!theAPI->IsProcessListInitialized())
+		return;
+
+	QMap<quint32, CBoxedProcessPtr> Processes = theAPI->GetAllProcesses();
+	QSet<QString> LiveProcesses;
+	foreach(const CBoxedProcessPtr& pProcess, Processes) {
+		if (!pProcess->IsTerminated()) {
+			QString Key = GetProcessExpandKey(pProcess);
+			if (!Key.isEmpty())
+				LiveProcesses.insert(Key);
+		}
+	}
+	bool Changed = false;
+	for (auto I = m_ProcessExpandState.begin(); I != m_ProcessExpandState.end();) {
+		if (!LiveProcesses.contains(I.key())) {
+			I = m_ProcessExpandState.erase(I);
+			Changed = true;
+		}
+		else
+			++I;
+	}
+	if (Changed)
+		SaveProcessExpandState();
 }
 
 void CSbieView::UpdateColapsed()
 {
+	if (!theConf->GetBool("Options/LegacyAutoExpandTree", false)) {
+		m_HoldExpand = true;
+		ApplyExpandState(theGUI->IsAutoExpand());
+		m_HoldExpand = false;
+		return;
+	}
+
 	foreach(const QString& Group, m_Groups.keys())
 	{
-		if (!m_Collapsed.contains(Group)) {
+		if (m_BoxExpandState.value("g|" + Group, true)) {
 			QModelIndex index = m_pSbieModel->FindGroupIndex(Group);
 			if(index.isValid())
 				m_pSbieTree->expand(m_pSortProxy->mapFromSource(index));
@@ -2410,22 +2905,151 @@ void CSbieView::ReloadUserConfig()
 			Grouping = theAPI->GetUserSettings()->GetText("BoxDisplayOrder");
 		CSbieView__ParseGroup(Grouping, m_Groups);
 	}
+	NormalizeGroups();
 
 	UpdateMoveMenu();
 
-	//QMap<QString, QStringList> Collapsed = theAPI->GetUserSettings()->GetTextMap("CollapsedBoxes");
-	//m_Collapsed = ListToSet(Collapsed[""]);
-	//if (m_Collapsed.isEmpty()) { // try legacy entries
-		QString Collapsed = theConf->GetString("UIConfig/BoxCollapsedView");
-		//if (Collapsed.isEmpty())
-		//	Collapsed = theAPI->GetUserSettings()->GetText("BoxCollapsedView");
-		m_Collapsed = ListToSet(SplitStr(Collapsed, ","));
-	//}
+	int Handling = theConf->GetInt("Options/BoxGroupHandling", 0);
+	m_BoxExpandState.clear();
+	if(Handling == 1 || Handling == 2) {
+		foreach(const QString& Group, m_Groups.keys())
+			m_BoxExpandState.insert("g|" + Group, Handling == 1);
+	}
+	else if (Handling == 0)
+	{
+		QStringList BoxState = theConf->GetStringList("UIConfig/BoxTreeState");
+		if (BoxState.isEmpty()) {
+			QString State = theConf->GetString("UIConfig/BoxTreeState");
+			if (!State.isEmpty())
+				BoxState.append(State);
+		}
+		foreach(const QString& State, BoxState) {
+			if (State.length() > 4 && State.at(1) == '|'
+			 && (State.at(0) == 'e' || State.at(0) == 'c')
+			 && (State.mid(2, 2) == "g|" || State.mid(2, 2) == "b|"))
+				m_BoxExpandState.insert(State.mid(2), State.at(0) == 'e');
+		}
+		if (m_BoxExpandState.isEmpty()) {
+			foreach(const QString& Name, SplitStr(theConf->GetString("UIConfig/BoxCollapsedView"), ",")) {
+				if (m_Groups.contains(Name))
+					m_BoxExpandState.insert("g|" + Name, false);
+				else
+					m_BoxExpandState.insert("b|" + Name, false);
+			}
+		}
+	}
+
+	m_ProcessExpandState.clear();
+	QStringList ProcessState = theConf->GetStringList("UIConfig/ProcessTreeState");
+	if (ProcessState.isEmpty()) {
+		QString State = theConf->GetString("UIConfig/ProcessTreeState");
+		if (!State.isEmpty())
+			ProcessState.append(State);
+	}
+	foreach(const QString& State, ProcessState) {
+		if (State.length() > 2 && State.at(1) == '|'
+		 && (State.at(0) == 'e' || State.at(0) == 'c'))
+			m_ProcessExpandState.insert(State.mid(2), State.at(0) == 'e');
+	}
+	if (m_ProcessExpandState.isEmpty())
+		theConf->DelValue("UIConfig/ProcessTreeState");
 
 	ClearUserUIConfig();
 }
 
-void CSbieView::ClearUserUIConfig(const QMap<QString, CSandBoxPtr> AllBoxes) 
+bool CSbieView::NormalizeGroups()
+{
+	bool Changed = false;
+
+	if (!m_Groups.contains("")) {
+		m_Groups[""] = QStringList();
+		Changed = true;
+	}
+
+	for (auto I = m_Groups.begin(); I != m_Groups.end(); ++I) {
+		QSet<QString> Seen;
+		QStringList Sanitized;
+		foreach(const QString& Name, I.value()) {
+			if (Name.isEmpty() || Name == I.key() || Seen.contains(Name)) {
+				Changed = true;
+				continue;
+			}
+			Seen.insert(Name);
+			Sanitized.append(Name);
+		}
+		if (Sanitized != I.value())
+			I.value() = Sanitized;
+	}
+
+	QSet<QString> GroupKeys = ListToSet(m_Groups.keys());
+
+	QHash<QString, QString> ParentOf;
+	for (auto I = m_Groups.begin(); I != m_Groups.end(); ++I) {
+		QStringList UniqueOwners;
+		foreach(const QString& Name, I.value()) {
+			auto KnownParent = ParentOf.find(Name);
+			if (KnownParent == ParentOf.end()) {
+				ParentOf.insert(Name, I.key());
+				UniqueOwners.append(Name);
+			}
+			else if (KnownParent.value() == I.key())
+				UniqueOwners.append(Name);
+			else
+				Changed = true;
+		}
+		if (UniqueOwners != I.value())
+			I.value() = UniqueOwners;
+	}
+
+	auto FindParent = [this](const QString& Group) -> QString {
+		for (auto J = m_Groups.constBegin(); J != m_Groups.constEnd(); ++J) {
+			if (J.value().contains(Group))
+				return J.key();
+		}
+		return QString();
+	};
+
+	foreach(const QString& Group, GroupKeys) {
+		if (Group.isEmpty())
+			continue;
+
+		QSet<QString> Visited;
+		QString Current = Group;
+		while (!Current.isEmpty()) {
+			if (Visited.contains(Current)) {
+				QString Parent = FindParent(Current);
+				if (!Parent.isEmpty()) {
+					m_Groups[Parent].removeAll(Current);
+					Changed = true;
+				}
+				break;
+			}
+			Visited.insert(Current);
+			Current = FindParent(Current);
+		}
+	}
+
+	QSet<QString> ReferencedGroups;
+	for (auto I = m_Groups.constBegin(); I != m_Groups.constEnd(); ++I) {
+		foreach(const QString& Name, I.value()) {
+			if (GroupKeys.contains(Name))
+				ReferencedGroups.insert(Name);
+		}
+	}
+
+	foreach(const QString& Group, GroupKeys) {
+		if (Group.isEmpty())
+			continue;
+		if (!ReferencedGroups.contains(Group) && !m_Groups[""].contains(Group)) {
+			m_Groups[""].append(Group);
+			Changed = true;
+		}
+	}
+
+	return Changed;
+}
+
+void CSbieView::ClearUserUIConfig(const QMap<QString, CSandBoxPtr> AllBoxes, bool bBoxesLoaded)
 {
 	if (!AllBoxes.isEmpty())
 	{
@@ -2441,20 +3065,30 @@ void CSbieView::ClearUserUIConfig(const QMap<QString, CSandBoxPtr> AllBoxes)
 		}
 	}
 
-	QSet<QString> Temp = m_Collapsed;
-	foreach(QString Name, m_Collapsed)
-	{
-		if (m_Groups.end() == std::find_if(m_Groups.begin(), m_Groups.end(),
-					  [Name](const QStringList& item)->int { return item.contains(Name); }))
-			Temp.remove(Name);
+	bool ExpandStateChanged = false;
+	if (bBoxesLoaded) {
+		for (auto I = m_BoxExpandState.begin(); I != m_BoxExpandState.end();) {
+			QString Name = I.key().mid(2);
+			bool Exists = I.key().startsWith("g|") ? m_Groups.contains(Name)
+				: AllBoxes.contains(Name.toLower());
+			if (!Exists) {
+				I = m_BoxExpandState.erase(I);
+				ExpandStateChanged = true;
+			}
+			else
+				++I;
+		}
 	}
-	m_Collapsed = Temp;
+	if (ExpandStateChanged && theConf->GetInt("Options/BoxGroupHandling", 0) == 0)
+		SaveBoxExpandState();
 }
 
 void CSbieView::SaveBoxGrouping()
 {
 	if (!theAPI->IsConnected())
 		return;
+
+	NormalizeGroups();
 
 	theAPI->GetUserSettings()->SetRefreshOnChange(false);
 
@@ -2474,6 +3108,15 @@ void CSbieView::SaveBoxGrouping()
 
 void CSbieView::OnMoveItem(const QString& Name, const QString& To, int row)
 {
+	if (!theAPI->GetBoxByName(Name).isNull()) {
+		if (!m_MoveBatchFocusBoxes.contains(Name))
+			m_MoveBatchFocusBoxes.append(Name);
+	}
+	else {
+		if (!m_MoveBatchFocusNames.contains(Name))
+			m_MoveBatchFocusNames.append(Name);
+	}
+
 	QModelIndex index;
 	if (!To.isEmpty()) { // only groups can be parents so add the group marker "!"
 		QModelIndex index0 = m_pSbieModel->FindIndex("!" + To);
@@ -2482,14 +3125,35 @@ void CSbieView::OnMoveItem(const QString& Name, const QString& To, int row)
 		index = m_pSbieModel->index(row, 0);
 	QModelIndex index2 = m_pSortProxy->mapFromSource(index);
 	int row2 = index2.row();
-	if (MoveItem(Name, To, row2)) {
+	m_MoveBatchChanged = MoveItem(Name, To, row2) || m_MoveBatchChanged;
+
+	if (m_MoveBatchPending)
+		return;
+
+	m_MoveBatchPending = true;
+	QTimer::singleShot(0, this, [this]() {
+		m_MoveBatchPending = false;
+
+		bool bChanged = m_MoveBatchChanged;
+		m_MoveBatchChanged = false;
+
+		QStringList FocusBoxes = m_MoveBatchFocusBoxes;
+		m_MoveBatchFocusBoxes.clear();
+		QStringList FocusNames = m_MoveBatchFocusNames;
+		m_MoveBatchFocusNames.clear();
+
+		if (!bChanged)
+			return;
+
 		m_pSbieModel->Clear(); //todo improve that
 		Refresh();
-	}
 
-	UpdateMoveMenu();
+		UpdateMoveMenu();
+		SaveBoxGrouping();
 
-	SaveBoxGrouping();
+		RestoreBoxSelectionLater(FocusBoxes);
+		RestoreNameSelectionLater(FocusNames);
+	});
 }
 
 void CSbieView::OnRemoveItem() 

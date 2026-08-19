@@ -54,54 +54,6 @@ CBoxedProcessPtr CSbiePlusAPI::OnProcessBoxed(quint32 ProcessId, const QString& 
 	return pProcess;
 }
 
-std::wstring GetWindowTextTimeout(HWND hWnd, UINT timeout) 
-{
-	DWORD_PTR length = 0;
-
-    if (SendMessageTimeoutW(hWnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, timeout, &length) == 0)
-        return L""; 
-    if (length == 0)
-        return L""; 
-
-    std::vector<wchar_t> buffer(length + 1);
-    if (SendMessageTimeoutW(hWnd, WM_GETTEXT, length + 1, reinterpret_cast<LPARAM>(buffer.data()), SMTO_ABORTIFHUNG, timeout, &length) == 0)
-        return L""; 
-    return std::wstring(buffer.data(), length); 
-}
-
-BOOL CALLBACK CSbiePlusAPI__WindowEnum(HWND hwnd, LPARAM lParam)
-{
-	if (GetParent(hwnd) || GetWindow(hwnd, GW_OWNER))
-		return TRUE;
-	ULONG style = GetWindowLong(hwnd, GWL_STYLE);
-	if ((style & (WS_CAPTION | WS_SYSMENU)) != (WS_CAPTION | WS_SYSMENU))
-		return TRUE;
-	if (!IsWindowVisible(hwnd))
-		return TRUE;
-	/*
-	if ((style & WS_OVERLAPPEDWINDOW) != WS_OVERLAPPEDWINDOW &&
-		(style & WS_POPUPWINDOW)      != WS_POPUPWINDOW)
-		return TRUE;
-	*/
-
-	ULONG pid;
-	GetWindowThreadProcessId(hwnd, &pid);
-
-	QMultiMap<quint32, QString>& m_WindowMap = *((QMultiMap<quint32, QString>*)(lParam));
-
-	QString name = QString::fromStdWString(GetWindowTextTimeout(hwnd, 10));
-
-	m_WindowMap.insert(pid, name);
-
-	return TRUE;
-}
-
-void CSbiePlusAPI::UpdateWindowMap()
-{
-	m_WindowMap.clear();
-	EnumWindows(CSbiePlusAPI__WindowEnum, (LPARAM)&m_WindowMap);
-}
-
 bool CSbiePlusAPI::IsRunningAsAdmin()
 {
 	if (m_UserSid.left(9) != "S-1-5-21-")
@@ -172,198 +124,11 @@ CSandBoxPlus::CSandBoxPlus(const QString& BoxName, class CSbieAPI* pAPI) : CSand
 	m_BoxDel = false;
 	m_NoForce = false;
 	m_BoxColor = QColor(Qt::yellow).rgb();
+	m_BoxAliasDisplayMode = 0;
 }
 
 CSandBoxPlus::~CSandBoxPlus()
 {
-}
-
-class QFileX : public QFile {
-public:
-	QFileX(const QString& path, const CSbieProgressPtr& pProgress, CArchive* pArchive) : QFile(path) 
-	{
-		m_pProgress = pProgress;
-		m_pArchive = pArchive;
-	}
-
-	bool open(OpenMode flags) override
-	{
-		if (m_pProgress->IsCanceled())
-			return false;
-		m_pProgress->ShowMessage(Split2(fileName(), "/", true).second);
-		m_pProgress->SetProgress((int)(m_pArchive->GetProgress() * 100.0));
-		return QFile::open(flags);
-	}
-
-	qint64 size() const override
-	{
-		qint64 Size = QFile::size();
-		if (QFileInfo(fileName()).isShortcut())
-		{
-			QFile File(fileName());
-			if (File.open(QFile::ReadOnly))
-				Size = File.size();
-			File.close();
-		}
-		return Size;
-	}
-
-protected:
-	CSbieProgressPtr m_pProgress;
-	CArchive* m_pArchive;
-};
-
-void CSandBoxPlus::ExportBoxAsync(const CSbieProgressPtr& pProgress, const QString& ExportPath, const QString& RootPath, const QString& Section, const QVariantMap& vParams)
-{
-	//CArchive Archive(ExportPath + ".tmp");
-	CArchive Archive(ExportPath);
-
-	QMap<int, QIODevice*> Files;
-	QMap<int, quint32> Attributes;
-
-	//QTemporaryFile* pConfigFile = new QTemporaryFile;
-	//pConfigFile->open();
-	//pConfigFile->write(Section.toUtf8());
-	//pConfigFile->close();
-	//
-	//int ArcIndex = Archive.AddFile("BoxConfig.ini");
-	//Files.insert(ArcIndex, pConfigFile);
-
-	QFile File(RootPath + "\\" + "BoxConfig.ini");
-	if (File.open(QFile::WriteOnly)) {
-		File.write(Section.toUtf8());
-		File.close();
-	}
-
-	QStringList FileList = ListDir(RootPath + "\\");
-	foreach(const QString& File, FileList)
-	{
-		StrPair RootName = Split2(File, "\\", true);
-		if(RootName.second.isEmpty())
-		{
-			RootName.second = RootName.first;
-			RootName.first = "";
-		}
-		int ArcIndex = Archive.AddFile(RootName.second);
-		if(ArcIndex != -1)
-		{
-			QString FileName = (RootName.first.isEmpty() ?  RootPath + "\\" : RootName.first) + RootName.second;
-			Files.insert(ArcIndex, new QFileX(FileName, pProgress, &Archive));
-			Attributes.insert(ArcIndex, GetFileAttributesW(QString(FileName).replace("/", "\\").toStdWString().c_str()));
-		}
-		//else
-			// this file is already present in the archive, this should not happen !!!
-	}
-
-	if (vParams.contains("password"))
-		Archive.SetPassword(vParams["password"].toString());
-
-	SArcInfo Info = GetArcInfo(ExportPath);
-
-    SCompressParams Params;
-	Params.iLevel = vParams["level"].toInt();
-	Params.bSolid = vParams["solid"].toBool();
-	Params.b7z = Info.ArchiveExt != "zip";
-
-	SB_STATUS Status = SB_OK;
-	if (!Archive.Update(&Files, true, &Params, &Attributes))
-		Status = SB_ERR((ESbieMsgCodes)SBX_7zCreateFailed);
-	
-	//if(!Status.IsError() && !pProgress->IsCanceled())
-	//	QFile::rename(ExportPath + ".tmp", ExportPath);
-	//else
-	//	QFile::remove(ExportPath + ".tmp");
-
-	File.remove();
-
-	pProgress->Finish(Status);
-}
-
-SB_PROGRESS CSandBoxPlus::ExportBox(const QString& FileName, const QString& Password, int Level, bool Solid)
-{
-	if (!CArchive::IsInit())
-		return SB_ERR((ESbieMsgCodes)SBX_7zNotReady);
-
-	if (theAPI->HasProcesses(m_Name))
-		return SB_ERR(SB_SnapIsRunning); // todo
-
-	if (!IsInitialized())
-		return SB_ERR(SB_SnapIsEmpty); // todo
-
-	QString Section = SbieIniGetEx(m_Name, "");
-
-	QVariantMap vParams;
-	if (!Password.isEmpty())
-		vParams["password"] = Password;
-	vParams["level"] = Level;
-	vParams["solid"] = Solid;
-
-	CSbieProgressPtr pProgress = CSbieProgressPtr(new CSbieProgress());
-	QtConcurrent::run(CSandBoxPlus::ExportBoxAsync, pProgress, FileName, m_FilePath, Section, vParams);
-	return SB_PROGRESS(OP_ASYNC, pProgress);
-}
-
-void CSandBoxPlus::ImportBoxAsync(const CSbieProgressPtr& pProgress, const QString& ImportPath, const QString& RootPath, const QString& BoxName, const QString& Password)
-{
-	CArchive Archive(ImportPath);
-
-	if (!Password.isEmpty())
-		Archive.SetPassword(Password);
-
-	if (Archive.Open() != ERR_7Z_OK) {
-		pProgress->Finish(SB_ERR((ESbieMsgCodes)SBX_7zOpenFailed));
-		return;
-	}
-
-	bool IsBoxArchive = false;
-
-	QMap<int, QIODevice*> Files;
-
-	for (int i = 0; i < Archive.FileCount(); i++) {
-		int ArcIndex = Archive.FindByIndex(i);
-		if(Archive.FileProperty(ArcIndex, "IsDir").toBool())
-			continue;
-		QString File = Archive.FileProperty(ArcIndex, "Path").toString();
-		if (File == "BoxConfig.ini")
-			IsBoxArchive = true;
-		Files.insert(ArcIndex, new QFileX(CArchive::PrepareExtraction(File, RootPath + "\\"), pProgress, &Archive));
-	}
-
-	if(!IsBoxArchive) {
-		pProgress->Finish(SB_ERR((ESbieMsgCodes)SBX_NotBoxArchive));
-		return;
-	}
-
-	SB_STATUS Status = SB_OK;
-	if (!Archive.Extract(&Files))
-		Status = SB_ERR((ESbieMsgCodes)SBX_7zExtractFailed);
-
-	if (!Status.IsError() && !pProgress->IsCanceled())
-	{
-		QFile File(RootPath + "\\" + "BoxConfig.ini");
-		if (File.open(QFile::ReadOnly)) {
-
-			QMetaObject::invokeMethod(theAPI, "SbieIniSetSection", Qt::BlockingQueuedConnection, // run this in the main thread
-				Q_ARG(QString, BoxName),
-				Q_ARG(QString, QString::fromUtf8(File.readAll()))
-			);
-
-			File.close();
-		}
-		File.remove();
-	}
-
-	pProgress->Finish(Status);
-}
-
-SB_PROGRESS CSandBoxPlus::ImportBox(const QString& FileName, const QString& Password)
-{
-	if (!CArchive::IsInit())
-		return SB_ERR((ESbieMsgCodes)SBX_7zNotReady);
-
-	CSbieProgressPtr pProgress = CSbieProgressPtr(new CSbieProgress());
-	QtConcurrent::run(CSandBoxPlus::ImportBoxAsync, pProgress, FileName, m_FilePath, m_Name, Password);
-	return SB_PROGRESS(OP_ASYNC, pProgress);
 }
 
 SB_STATUS CSandBoxPlus_CopyFolder(const CSbieProgressPtr& pProgress, const QString& SourcePath, const QString& DestinationPath)
@@ -472,14 +237,45 @@ void CSandBoxPlus::UpdateDetails()
 	QStringList BorderCfg = GetText("BorderColor").split(",");
 	m_BoxColor = QColor("#" + BorderCfg[0].mid(5, 2) + BorderCfg[0].mid(3, 2) + BorderCfg[0].mid(1, 2)).rgb();
 
-	m_BoxAlias = GetText("BoxAlias");
+	m_BoxAlias = GetText("BoxAlias").trimmed();
+	m_BoxAliasDisplayMode = m_pAPI->GetGlobalSettings()->GetNum("BoxAliasDisplayMode", 2);
+	if (m_BoxAliasDisplayMode < 0 || m_BoxAliasDisplayMode > 2)
+		m_BoxAliasDisplayMode = 2;
 }
 
-QString CSandBoxPlus::GetDisplayName() const
+QString CSandBoxPlus::GetDisplayName(EDisplayNameContext Context) const
 {
-	if (!m_BoxAlias.isEmpty())
-		return m_BoxAlias;
-	return GetName().replace("_", " ");
+	return FormatDisplayName(GetName(), m_BoxAlias, m_BoxAliasDisplayMode, Context);
+}
+
+QString CSandBoxPlus::FormatDisplayName(const QString& BoxName, const QString& BoxAlias, int DisplayMode, EDisplayNameContext Context)
+{
+	if (DisplayMode < 0 || DisplayMode > 2)
+		DisplayMode = 2;
+	QString DisplayBoxName = QString(BoxName).replace("_", " ");
+	QString Alias = BoxAlias.trimmed();
+	if (DisplayMode == 1 || Alias.isEmpty())
+		return DisplayBoxName;
+	if (DisplayMode == 2 && Context == eDisplayNormal
+	 && Alias.compare(BoxName, Qt::CaseInsensitive) != 0)
+		return QString("%1 (%2)").arg(Alias, BoxName);
+	return Alias;
+}
+
+QString CSandBoxPlus::GetBoxToolTip() const
+{
+	QString ToolTip = GetName() + "\n";
+	if (!m_BoxAlias.isEmpty()
+	 && m_BoxAlias.compare(GetName(), Qt::CaseInsensitive) != 0)
+		ToolTip += CSandMan::tr("    Alias: %1\n").arg(m_BoxAlias);
+	ToolTip += CSandMan::tr("    File root: %1\n").arg(GetFileRoot());
+	ToolTip += CSandMan::tr("    Registry root: %1\n").arg(GetRegRoot());
+	ToolTip += CSandMan::tr("    IPC root: %1\n").arg(GetIpcRoot());
+	if (!GetMountRoot().isEmpty())
+		ToolTip += CSandMan::tr("    Disk root: %1\n").arg(GetMountRoot());
+	ToolTip += CSandMan::tr("Options:\n    ");
+	ToolTip += GetStatusStr().replace(", ", "\n    ");
+	return ToolTip;
 }
 
 bool CSandBoxPlus::IsBoxexPath(const QString& Path)
@@ -810,6 +606,7 @@ bool CSandBoxPlus::CheckUnsecureConfig() const
 {
 	//if (GetBool("UnsafeTemplate", false, true, true)) return true;
 	if (GetBool("OriginalToken", false, true, true)) return true;
+	if (GetBool("ReplicateToken", false, true, true)) return true; // same access as original but rebuild from scratch
 	if (GetBool("OpenAllSysCalls", false, true, true)) return true;
 	//if (GetBool("OpenToken", false, true, true)) return true; // not present
 		if(GetBool("UnrestrictedToken", false, true, true)) return true;
@@ -1090,7 +887,7 @@ int	CSandBoxPlus::IsLeaderProgram(const QString& ProgName)
 	return FindInStrList(Programs, ProgName) != Programs.end() ? 1 : 0; 
 }
 
-SB_STATUS CSandBoxPlus::DeleteContentAsync(bool DeleteSnapshots, bool bOnAutoDelete)
+SB_STATUS CSandBoxPlus::DeleteContentAsync(bool DeleteSnapshots, bool UseCurrentSnapshot)
 {
 	if (GetBool("NeverDelete", false))
 		return SB_ERR(SB_DeleteProtect);
@@ -1105,7 +902,7 @@ SB_STATUS CSandBoxPlus::DeleteContentAsync(bool DeleteSnapshots, bool bOnAutoDel
 		AddJobToQueue(pJob);
 	}
 
-	CBoxJob* pJob = new CCleanUpJob(this, DeleteSnapshots, bOnAutoDelete);
+	CBoxJob* pJob = new CCleanUpJob(this, DeleteSnapshots, UseCurrentSnapshot);
 	AddJobToQueue(pJob);
 
 	return SB_OK;

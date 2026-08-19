@@ -220,6 +220,11 @@ void CSbieIni::SetTextMap(const QString& Setting, const QMap<QString, QStringLis
 	QStringList Mapping;
 	foreach(const QString& Group, Map.keys())
 	{
+		if (Map[Group].isEmpty()) {
+			Mapping.append(Group + ":");
+			continue;
+		}
+
 		QString CurrentLine;
 		foreach(const QString & Name, Map[Group]) {
 			if (Setting.length() + 1 + Group.length() + 1 + CurrentLine.length() + 1 + Name.length() >= CONF_LINE_LEN) { // limit line length
@@ -242,7 +247,16 @@ QMap<QString, QStringList> CSbieIni::GetTextMap(const QString& Setting)
 	QMap<QString, QStringList> Map;
 	foreach(const QString &CurrentLine, GetTextList(Setting, false)) {
 		int pos = CurrentLine.lastIndexOf(":");
-		Map[pos == -1 ? "" : CurrentLine.left(pos)].append(CurrentLine.mid(pos+1).split(","));
+		QString Group = (pos == -1) ? "" : CurrentLine.left(pos);
+		QString Payload = CurrentLine.mid(pos + 1);
+
+		if (Payload.isEmpty()) {
+			if (!Map.contains(Group))
+				Map.insert(Group, QStringList());
+			continue;
+		}
+
+		Map[Group].append(Payload.split(",", Qt::SkipEmptyParts));
 	}
 	return Map;
 }
@@ -323,11 +337,6 @@ SB_STATUS CSbieIni::RenameSection(const QString& NewName, bool deleteOld) // Not
 		return SB_ERR();
 	bool SameName = (bool)(NewName.compare(m_Name, Qt::CaseInsensitive) == 0);
 
-	// Get all Settings
-	QList<SbieIniValue> Settings = GetIniSection(&status);
-	if (status != STATUS_SUCCESS)
-		return SB_ERR(SB_FailedCopyConf, QVariantList() << m_Name << (quint32)status, status);
-
 	// check if such a box already exists
 	if (!SameName)
 	{
@@ -336,25 +345,29 @@ SB_STATUS CSbieIni::RenameSection(const QString& NewName, bool deleteOld) // Not
 			return SB_ERR(SB_AlreadyExists, QVariantList() << NewName);
 	}
 
+	// Get raw section content to preserve comments and order (like Duplicate Box does)
+	QString RawSection = SbieIniGetEx(m_Name, "");
+	if (RawSection.isEmpty())
+		return SB_ERR(SB_FailedCopyConf, QVariantList() << m_Name << "Empty section");
+
+	SB_STATUS Status;
+
 	// if the name is the same we first delete than write, 
 	// else we first write and than delete, for safety reasons
 	if (deleteOld && SameName)
 		goto do_delete;
 
 do_write:
-	// Apply all Settings
-	for (QList<SbieIniValue>::iterator I = Settings.begin(); I != Settings.end(); ++I)
-	{
-		SB_STATUS Status = SbieIniSet(NewName, I->Name, I->Value, eIniInsert, true);
-		if (Status.IsError())
-			return Status;
-	}
+	// Write the entire raw section to preserve comments and order
+	Status = SbieIniSet(NewName, "", RawSection, eIniUpdate, true);
+	if (Status.IsError())
+		return Status;
 
 do_delete:
 	// Delete ini section
 	if (deleteOld)
 	{
-		SB_STATUS Status = SbieIniSet(m_Name, "*", "", eIniUpdate, true);
+		Status = SbieIniSet(m_Name, "*", "", eIniUpdate, true);
 		if (Status.IsError())
 			return SB_ERR(SB_DeleteFailed, QVariantList() << m_Name << (quint32)Status.GetStatus(), Status.GetStatus());
 		deleteOld = false;

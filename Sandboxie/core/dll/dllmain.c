@@ -55,6 +55,7 @@ SBIELOW_DATA* SbieApi_data = NULL;
 #ifdef _M_ARM64EC
 ULONG* SbieApi_SyscallPtr = NULL;
 #endif
+extern HANDLE SbieApi_DeviceHandle;
 
 HINSTANCE Dll_Instance = NULL;
 HMODULE Dll_Ntdll = NULL;
@@ -110,7 +111,7 @@ BOOLEAN Dll_AppContainerToken = FALSE;
 BOOLEAN Dll_ChromeSandbox = FALSE;
 BOOLEAN Dll_FirstProcessInBox = FALSE;
 BOOLEAN Dll_CompartmentMode = FALSE;
-//BOOLEAN Dll_AlernateIpcNaming = FALSE;
+BOOLEAN Dll_AlternateIpcNaming = FALSE;
 
 ULONG Dll_ImageType = DLL_IMAGE_UNSPECIFIED;
 
@@ -208,6 +209,8 @@ _FX BOOL WINAPI DllMain(
             Gui_ResetClipCursor();
         }
 
+        if(!SbieApi_data && SbieApi_DeviceHandle != INVALID_HANDLE_VALUE)
+            NtClose(SbieApi_DeviceHandle);
     }
 
     return TRUE;
@@ -327,7 +330,7 @@ _FX void Dll_InitInjected(void)
 
     Dll_ProcessFlags = SbieApi_QueryProcessInfo(0, 0);
 
-    Dll_CompartmentMode = (Dll_ProcessFlags & SBIE_FLAG_APP_COMPARTMENT) != 0;
+    Dll_CompartmentMode = SbieApi_QueryConfBool(NULL, L"SetCompartmentMode", (Dll_ProcessFlags & SBIE_FLAG_APP_COMPARTMENT) != 0);
 
     //
     // check for restricted token types
@@ -374,27 +377,27 @@ _FX void Dll_InitInjected(void)
     Dll_BoxKeyPathLen = wcslen(Dll_BoxKeyPath);
     Dll_BoxIpcPathLen = wcslen(Dll_BoxIpcPath);
 
-  //  Dll_AlernateIpcNaming = SbieApi_QueryConfBool(NULL, L"UseAlernateIpcNaming", FALSE);
-  //  if (Dll_AlernateIpcNaming) {
-  //
-  //      //
-  //      // instead of using a separate namespace
-  //		// just replace all \ with _ and use it as a suffix rather then an actual path
-  //      // similar to what is done for named pipes already
-  //      // this approach can help to reduce the footprint when running in portable mode
-  //      // alternatively we could create volatile entries under AppContainerNamedObjects 
-  //      //
-  //
-  //      WCHAR* ptr = (WCHAR*)Dll_BoxIpcPath;
-  //      while (*ptr) {
-  //          WCHAR *ptr2 = wcschr(ptr, L'\\');
-  //          if (ptr2) {
-  //              ptr = ptr2;
-  //              *ptr = L'_';
-  //          } else
-  //              ptr += wcslen(ptr);
-  //      }
-  //  }
+    Dll_AlternateIpcNaming = SbieApi_QueryConfBool(NULL, L"UseAlternateIpcNaming", FALSE);
+    if (Dll_AlternateIpcNaming) {
+  
+        //
+        // instead of using a separate namespace
+  		// just replace all \ with _ and use it as a suffix rather then an actual path
+        // similar to what is done for named pipes already
+        // this approach can help to reduce the footprint when running in portable mode
+        // alternatively we could create volatile entries under AppContainerNamedObjects 
+        //
+  
+        WCHAR* ptr = (WCHAR*)Dll_BoxIpcPath;
+        while (*ptr) {
+            WCHAR *ptr2 = wcschr(ptr, L'\\');
+            if (ptr2) {
+                ptr = ptr2;
+                *ptr = L'_';
+            } else
+                break;
+        }
+    }
 
 
 #ifdef WITH_DEBUG
@@ -625,6 +628,106 @@ _FX void Dll_InitExeEntry(void)
 
 
 //---------------------------------------------------------------------------
+// Dll_TryDetectElectron
+//---------------------------------------------------------------------------
+
+
+_FX BOOLEAN Dll_TryDetectElectron()
+{
+    //
+    // Detect Electron/Chromium apps by checking for characteristic files.
+    // These files can be in the executable's directory or in subdirectories.
+    //
+
+    static const WCHAR* SubDirs[] = {
+        L"",
+        L"app\\",
+        L"resources\\",
+        NULL
+    };
+
+    static const WCHAR* FileNames[] = {
+        L"chrome_100_percent.pak",
+        L"chrome_200_percent.pak",
+        L"resources.pak",
+        L"chrome_elf.dll",
+        NULL
+    };
+
+    BOOLEAN result = FALSE;
+    RTL_USER_PROCESS_PARAMETERS *ProcessParams;
+    WCHAR *ImagePath;
+    WCHAR *DirEnd;
+    WCHAR *FilePath;
+    ULONG DirLen;
+    ULONG ImagePathLen;
+    UNICODE_STRING objname;
+    OBJECT_ATTRIBUTES objattrs;
+    FILE_BASIC_INFORMATION fileInfo;
+    ULONG i, j;
+
+    ProcessParams = Proc_GetRtlUserProcessParameters();
+    if (!ProcessParams)
+        return FALSE;
+
+    ImagePath = ProcessParams->ImagePathName.Buffer;
+    ImagePathLen = ProcessParams->ImagePathName.Length / sizeof(WCHAR);
+    if (!ImagePath || ImagePathLen == 0)
+        return FALSE;
+
+    //
+    // Find the last backslash to get the directory
+    // Note: ImagePath may not be null-terminated, so we search within bounds
+    //
+
+    DirEnd = NULL;
+    for (i = ImagePathLen; i > 0; i--) {
+        if (ImagePath[i - 1] == L'\\') {
+            DirEnd = &ImagePath[i - 1];
+            break;
+        }
+    }
+    if (!DirEnd)
+        return FALSE;
+
+    DirLen = (ULONG)(DirEnd - ImagePath + 1);
+
+    //
+    // Allocate buffer for NT path: "\??" (4) + dir + subdir + filename + null
+    //
+
+    FilePath = Dll_AllocTemp((4 + DirLen + 64) * sizeof(WCHAR));
+    if (!FilePath)
+        return FALSE;
+
+    wmemcpy(FilePath, L"\\??\\", 4);
+    wmemcpy(FilePath + 4, ImagePath, DirLen);
+
+    //
+    // Try each subdirectory and filename combination
+    //
+
+    for (i = 0; SubDirs[i] && !result; i++) {
+        for (j = 0; FileNames[j] && !result; j++) {
+
+            wcscpy(FilePath + 4 + DirLen, SubDirs[i]);
+            wcscat(FilePath + 4 + DirLen, FileNames[j]);
+
+            RtlInitUnicodeString(&objname, FilePath);
+            InitializeObjectAttributes(&objattrs, &objname, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+            if (NT_SUCCESS(NtQueryAttributesFile(&objattrs, &fileInfo)))
+                result = TRUE;
+        }
+    }
+
+    Dll_Free(FilePath);
+
+    return result;
+}
+
+
+//---------------------------------------------------------------------------
 // Dll_GetImageType
 //---------------------------------------------------------------------------
 
@@ -725,6 +828,12 @@ _FX ULONG Dll_GetImageType(const WCHAR *ImageName)
         }
     }
 
+    if (ImageType == DLL_IMAGE_UNSPECIFIED && SbieApi_QueryConfBool(NULL, L"UseElectronDetection", TRUE)) {
+        if (Dll_TryDetectElectron()) {
+			ImageType = DLL_IMAGE_GOOGLE_CHROME;
+        }
+    }
+
     return ImageType;
 }
 
@@ -736,6 +845,11 @@ _FX ULONG Dll_GetImageType(const WCHAR *ImageName)
 _FX void Dll_SelectImageType(void)
 {
     Dll_ImageType = Dll_GetImageType(Dll_ImageName);
+
+    if (Dll_ImageType == DLL_IMAGE_GOOGLE_CHROME) {
+        extern BOOLEAN Dll_UseChromeSecurePreferencesHack;
+        Dll_UseChromeSecurePreferencesHack = Config_GetSettingsForImageName_bool(L"UseChromeSecurePreferencesHack", TRUE);
+    }
 
     //if (Dll_ImageType == DLL_IMAGE_UNSPECIFIED &&
     //        _wcsnicmp(Dll_ImageName, L"FlashPlayerPlugin_", 18) == 0)
@@ -804,7 +918,6 @@ _FX VOID Dll_Ordinal1(INJECT_DATA * inject)
     SbieApi_SyscallPtr = (ULONG*)((ULONG64)data->syscall_data + sizeof(ULONG) + sizeof(ULONG) + (NATIVE_FUNCTION_SIZE * NATIVE_FUNCTION_COUNT));
 #endif
 
-    extern HANDLE SbieApi_DeviceHandle;
     SbieApi_DeviceHandle = (HANDLE)data->api_device_handle;
 
     //
@@ -852,10 +965,12 @@ _FX VOID Dll_Ordinal1(INJECT_DATA * inject)
         // workaround for Program Compatibility Assistant (PCA), we have
         // to start a second instance of this process outside the PCA job,
         // see also Proc_RestartProcessOutOfPcaJob
+        // 
+		// note: restart fails if running as AppContainer
         //
 
         int MustRestartProcess = 0;
-        if (Dll_ProcessFlags & SBIE_FLAG_PROCESS_IN_PCA_JOB) {
+        if ((Dll_ProcessFlags & SBIE_FLAG_PROCESS_IN_PCA_JOB) && !(Dll_ProcessFlags & SBIE_FLAG_PROCESS_IN_APP_PKG)) {
             if (!SbieApi_QueryConfBool(NULL, L"NoRestartOnPCA", FALSE))
                 MustRestartProcess = 1;
         }

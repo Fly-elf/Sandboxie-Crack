@@ -323,6 +323,18 @@ static NTSTATUS Ipc_NtOpenSection(
     ACCESS_MASK DesiredAccess,
     OBJECT_ATTRIBUTES *ObjectAttributes);
 
+static NTSTATUS Ipc_NtMapViewOfSection(
+    IN  HANDLE SectionHandle,
+    IN  HANDLE ProcessHandle,
+    IN  OUT PVOID *BaseAddress,
+    IN  ULONG_PTR ZeroBits,
+    IN  SIZE_T CommitSize,
+    IN  OUT PLARGE_INTEGER SectionOffset OPTIONAL,
+    IN  OUT PSIZE_T ViewSize,
+    IN  ULONG InheritDisposition,
+    IN  ULONG AllocationType,
+    IN  ULONG Protect);
+
 
 //---------------------------------------------------------------------------
 
@@ -398,6 +410,7 @@ static P_NtOpenSemaphore            __sys_NtOpenSemaphore           = NULL;
 static P_NtCreateSection            __sys_NtCreateSection           = NULL;
 static P_NtCreateSectionEx          __sys_NtCreateSectionEx         = NULL;
 static P_NtOpenSection              __sys_NtOpenSection             = NULL;
+static P_NtMapViewOfSection         __sys_NtMapViewOfSection        = NULL;
 
 static P_NtCreateSymbolicLinkObject __sys_NtCreateSymbolicLinkObject= NULL;
 static P_NtOpenSymbolicLinkObject   __sys_NtOpenSymbolicLinkObject  = NULL;
@@ -534,16 +547,21 @@ _FX BOOLEAN Ipc_Init(void)
     }
     SBIEDLL_HOOK(Ipc_,NtOpenSection);
 
+    SBIEDLL_HOOK(Ipc_,NtMapViewOfSection);
+
     SBIEDLL_HOOK(Ipc_,NtCreateSymbolicLinkObject);
     SBIEDLL_HOOK(Ipc_,NtOpenSymbolicLinkObject);
 
-    SBIEDLL_HOOK(Ipc_,NtCreateDirectoryObject);
-	void* NtCreateDirectoryObjectEx = GetProcAddress(Dll_Ntdll, "NtCreateDirectoryObjectEx");
-    if (NtCreateDirectoryObjectEx) { // windows 8
-	    SBIEDLL_HOOK(Ipc_,NtCreateDirectoryObjectEx);
-	}
-    SBIEDLL_HOOK(Ipc_,NtOpenDirectoryObject);
-    SBIEDLL_HOOK(Ipc_,NtQueryDirectoryObject);
+    if (!Dll_AlternateIpcNaming) // alternate naming does not need an own namespace
+    {
+        SBIEDLL_HOOK(Ipc_, NtCreateDirectoryObject);
+        void* NtCreateDirectoryObjectEx = GetProcAddress(Dll_Ntdll, "NtCreateDirectoryObjectEx");
+        if (NtCreateDirectoryObjectEx) { // windows 8
+            SBIEDLL_HOOK(Ipc_, NtCreateDirectoryObjectEx);
+        }
+        SBIEDLL_HOOK(Ipc_, NtOpenDirectoryObject);
+        SBIEDLL_HOOK(Ipc_, NtQueryDirectoryObject);
+    }
 
     // OriginalToken BEGIN
     if (!Dll_CompartmentMode && !SbieApi_QueryConfBool(NULL, L"OriginalToken", FALSE))
@@ -553,7 +571,7 @@ _FX BOOLEAN Ipc_Init(void)
         SBIEDLL_HOOK(Ipc_, NtImpersonateThread);
     }
 
-    //if (!Dll_AlernateIpcNaming) // alternate naming does not need an own namespace
+    if (!Dll_AlternateIpcNaming) // alternate naming does not need an own namespace
     if (Dll_FirstProcessInBox) {
         Ipc_CreateObjects();
     }
@@ -813,19 +831,19 @@ _FX NTSTATUS Ipc_GetName(
         objname_len = ObjectName->Length & ~1;
         objname_buf = ObjectName->Buffer;
 
-        //if (Dll_AlernateIpcNaming) {
-        //    
-        //    //
-        //    // Since in this mode we don't call Ipc_CreateObjects we don't have a boxed namespace
-        //    // and are using existing namespaces only with a name suffix
-        //    // hence we can't use Global without system privileges, so we strip it
-        //    //
-        //
-        //    if (_wcsnicmp(objname_buf, L"Global\\", 7) == 0) {
-        //        objname_len -= 7;
-        //        objname_buf += 7;
-        //    }
-        //}
+        if (Dll_AlternateIpcNaming) {
+
+            //
+            // Since in this mode we don't call Ipc_CreateObjects we don't have a boxed namespace
+            // and are using existing namespaces only with a name suffix
+            // hence we can't use Global without system privileges, so we strip it
+            //
+
+            if (_wcsnicmp(objname_buf, L"Global\\", 7) == 0) {
+                objname_len -= 7 * sizeof(WCHAR);
+                objname_buf += 7;
+            }
+        }
 
     } else {
         objname_len = 0;
@@ -967,21 +985,21 @@ _FX NTSTATUS Ipc_GetName(
 
 check_sandbox_prefix:
 
-    //if (Dll_AlernateIpcNaming)
-    //{
-    //    if (length >= Dll_BoxIpcPathLen &&
-    //        0 == Dll_NlsStrCmp(
-    //            &(*OutTruePath)[length - Dll_BoxIpcPathLen], Dll_BoxIpcPath, Dll_BoxIpcPathLen))
-    //    {
-    //        (*OutTruePath)[length - Dll_BoxIpcPathLen] = L'\0';
-    //        length -= Dll_BoxIpcPathLen;
-    //        if (OutIsBoxedPath)
-    //            *OutIsBoxedPath = TRUE;
-    //
-    //        goto check_sandbox_prefix;
-    //    }
-    //}
-    //else
+    if (Dll_AlternateIpcNaming)
+    {
+        if (length >= Dll_BoxIpcPathLen &&
+            0 == Dll_NlsStrCmp(
+                &(*OutTruePath)[length - Dll_BoxIpcPathLen], Dll_BoxIpcPath, Dll_BoxIpcPathLen))
+        {
+            (*OutTruePath)[length - Dll_BoxIpcPathLen] = L'\0';
+            length -= Dll_BoxIpcPathLen;
+            if (OutIsBoxedPath)
+                *OutIsBoxedPath = TRUE;
+    
+            goto check_sandbox_prefix;
+        }
+    }
+    else
     if (length >= Dll_BoxIpcPathLen &&
             0 == Dll_NlsStrCmp(
                 *OutTruePath, Dll_BoxIpcPath, Dll_BoxIpcPathLen))
@@ -1005,15 +1023,15 @@ check_sandbox_prefix:
 
     *OutCopyPath = name;
 
-    //if (Dll_AlernateIpcNaming)
-    //{
-    //    wmemcpy(name, *OutTruePath, length);
-    //    name += length;
-    //
-    //    wmemcpy(name, Dll_BoxIpcPath, Dll_BoxIpcPathLen);
-    //    name += Dll_BoxIpcPathLen;
-    //}
-    //else
+    if (Dll_AlternateIpcNaming)
+    {
+        wmemcpy(name, *OutTruePath, length);
+        name += length;
+    
+        wmemcpy(name, Dll_BoxIpcPath, Dll_BoxIpcPathLen);
+        name += Dll_BoxIpcPathLen;
+    }
+    else
     {
         wmemcpy(name, Dll_BoxIpcPath, Dll_BoxIpcPathLen);
         name += Dll_BoxIpcPathLen;
@@ -1220,8 +1238,8 @@ _FX NTSTATUS Ipc_CreatePath(WCHAR *TruePath, WCHAR *CopyPath)
     UNICODE_STRING objname;
     WCHAR *backslash;
 
-    //if (Dll_AlernateIpcNaming)
-    //    return STATUS_OBJECT_PATH_NOT_FOUND;
+    if (Dll_AlternateIpcNaming)
+        return STATUS_OBJECT_PATH_NOT_FOUND;
 
     //
     // open the TruePath object directory containing the object
@@ -4250,6 +4268,58 @@ OpenTruePath:
 
 
 //---------------------------------------------------------------------------
+// Ipc_NtMapViewOfSection
+//---------------------------------------------------------------------------
+
+
+_FX NTSTATUS Ipc_NtMapViewOfSection(
+    IN  HANDLE SectionHandle,
+    IN  HANDLE ProcessHandle,
+    IN  OUT PVOID *BaseAddress,
+    IN  ULONG_PTR ZeroBits,
+    IN  SIZE_T CommitSize,
+    IN  OUT PLARGE_INTEGER SectionOffset OPTIONAL,
+    IN  OUT PSIZE_T ViewSize,
+    IN  ULONG InheritDisposition,
+    IN  ULONG AllocationType,
+    IN  ULONG Protect)
+{
+    NTSTATUS status;
+
+    if (Dll_ImageType == DLL_IMAGE_MOZILLA_FIREFOX) { // Firefox 146+
+    
+        HANDLE currentProcess = NtCurrentProcess();
+        if (ProcessHandle != currentProcess && ProcessHandle != INVALID_HANDLE_VALUE) {
+
+            if (Protect == PAGE_EXECUTE_READ) {
+
+                SECTION_BASIC_INFORMATION sbi;
+                NTSTATUS status = NtQuerySection(SectionHandle, SectionBasicInformation, &sbi, sizeof(sbi), NULL);
+
+                if (NT_SUCCESS(status) &&  (sbi.AllocationAttributes & SEC_IMAGE) == 0) {
+
+                    // Not an image section, likely the thunk allocation
+					// Upgrade to RWX so that the SbieDll.dll in the child can install the required hooks
+                    // else NtProtectVirtualMemory will bug out with STATUS_SECTION_PROTECTION !
+
+                    //SbieApi_MonitorPutMsg(MONITOR_HOOK, L"BAM: Firefox NtMapViewOfSection hack");
+
+                    Protect = PAGE_EXECUTE_READWRITE;
+                }
+            }
+        }
+    }
+
+    status = __sys_NtMapViewOfSection(
+        SectionHandle, ProcessHandle, BaseAddress, ZeroBits,
+        CommitSize, SectionOffset, ViewSize,
+        InheritDisposition, AllocationType, Protect);
+   
+	return status;
+}
+
+
+//---------------------------------------------------------------------------
 // Ipc_NtCreateSymbolicLinkObject
 //---------------------------------------------------------------------------
 
@@ -4908,7 +4978,7 @@ _FX NTSTATUS Ipc_MergeDirectoryObject(IPC_MERGE *merge, WCHAR* path, BOOLEAN joi
 
         for (POBJECT_DIRECTORY_INFORMATION directoryInfo = buffer; directoryInfo->Name.Length != 0; directoryInfo++)
         {
-            ULONG len = sizeof(IPC_MERGE_ENTRY) + (directoryInfo->Name.MaximumLength + directoryInfo->TypeName.MaximumLength) * sizeof(WCHAR);
+            ULONG len = sizeof(IPC_MERGE_ENTRY) + directoryInfo->Name.MaximumLength + directoryInfo->TypeName.MaximumLength;
 
             //
             // when we are joining we remove the older entries when a duplicate is encountered
@@ -5021,7 +5091,10 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
         NTSTATUS status = Ipc_GetName(DirectoryHandle, (UNICODE_STRING*)-1, &TruePath, &CopyPath, NULL);
 
         if (!NT_SUCCESS(status))
+		{
+			LeaveCriticalSection(&Ipc_Handles_CritSec);
             return status;
+		}
 
         Ipc_MergeDirectoryObject(merge, TruePath, FALSE);
 
@@ -5043,7 +5116,19 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
             entry = List_Next(entry);
     }
     if (!entry)
-        return STATUS_NO_MORE_ENTRIES;
+	{
+		LeaveCriticalSection(&Ipc_Handles_CritSec);
+		return STATUS_NO_MORE_ENTRIES;
+	}
+
+    //
+    // check minimum buffer size - must fit at least the terminator entry
+    //
+
+    if (Buffer && Length < sizeof(OBJECT_DIRECTORY_INFORMATION)) {
+        LeaveCriticalSection(&Ipc_Handles_CritSec);
+        return STATUS_BUFFER_TOO_SMALL;
+    }
 
     //
     // count the buffer space
@@ -5053,7 +5138,8 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
     ULONG TotalLength = sizeof(OBJECT_DIRECTORY_INFORMATION);
     for (IPC_MERGE_ENTRY* cur = entry; cur; cur = List_Next(cur)) {
 
-        ULONG len = sizeof(OBJECT_DIRECTORY_INFORMATION) + (cur->Name.MaximumLength + cur->TypeName.MaximumLength) * sizeof(WCHAR);
+        // add 2 * sizeof(WCHAR) for null terminators
+        ULONG len = sizeof(OBJECT_DIRECTORY_INFORMATION) + cur->Name.MaximumLength + cur->TypeName.MaximumLength + 2 * sizeof(WCHAR);
 
         if (Buffer && TotalLength + len > Length)
             break; // not enough space for this entry
@@ -5071,6 +5157,7 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
 
     if (!Buffer) {
         if (ReturnLength) *ReturnLength = TotalLength;
+		LeaveCriticalSection(&Ipc_Handles_CritSec);
         return STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -5079,7 +5166,7 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
     //
 
     POBJECT_DIRECTORY_INFORMATION directoryInfo = Buffer;
-    WCHAR* ptr = directoryInfo + CountToGo + 1;
+    WCHAR* ptr = (WCHAR*)((UCHAR*)Buffer + (CountToGo + 1) * sizeof(OBJECT_DIRECTORY_INFORMATION));
 
     ULONG EndIndex = indexCounter + CountToGo;
     for (; entry && indexCounter < EndIndex; indexCounter++) {
@@ -5087,15 +5174,17 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
         if (directoryInfo) {
 
             directoryInfo->Name.Length = entry->Name.Length;
-            directoryInfo->Name.MaximumLength = entry->Name.MaximumLength;
+            directoryInfo->Name.MaximumLength = entry->Name.MaximumLength + sizeof(WCHAR);
             directoryInfo->Name.Buffer = ptr;
             memcpy(ptr, entry->Name.Buffer, entry->Name.MaximumLength);
+            ptr[entry->Name.Length / sizeof(WCHAR)] = L'\0';
             ptr += directoryInfo->Name.MaximumLength / sizeof(WCHAR);
 
             directoryInfo->TypeName.Length = entry->TypeName.Length;
-            directoryInfo->TypeName.MaximumLength = entry->TypeName.MaximumLength;
+            directoryInfo->TypeName.MaximumLength = entry->TypeName.MaximumLength + sizeof(WCHAR);
             directoryInfo->TypeName.Buffer = ptr;
             memcpy(ptr, entry->TypeName.Buffer, entry->TypeName.MaximumLength);
+            ptr[entry->TypeName.Length / sizeof(WCHAR)] = L'\0';
             ptr += directoryInfo->TypeName.MaximumLength / sizeof(WCHAR);
 
             directoryInfo++;
@@ -5106,13 +5195,12 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
 
     //
     // terminate listing with an empty entry
+    // Must zero entire structure including padding bytes for RtlCompareMemory check in QueryDosDeviceW
     //
 
     if (directoryInfo) {
 
-        directoryInfo->Name.Length = directoryInfo->TypeName.Length = 0;
-        directoryInfo->Name.MaximumLength = directoryInfo->TypeName.MaximumLength = 0;
-        directoryInfo->Name.Buffer = directoryInfo->TypeName.Buffer = NULL;
+        memset(directoryInfo, 0, sizeof(OBJECT_DIRECTORY_INFORMATION));
     }
 
     //
@@ -5122,7 +5210,12 @@ _FX NTSTATUS Ipc_NtQueryDirectoryObject(
     if (ReturnLength) *ReturnLength = TotalLength;
     if (Context) *Context = indexCounter;
     if (indexCounter < (ULONG)merge->objects.count)
+	{
+		LeaveCriticalSection(&Ipc_Handles_CritSec);
         return STATUS_MORE_ENTRIES;
+	}
+	
+	LeaveCriticalSection(&Ipc_Handles_CritSec);
     return STATUS_SUCCESS;
 }
 
@@ -5758,20 +5851,18 @@ _FX ULONG Ipc_NtQueryObjectName(UNICODE_STRING *ObjectName, ULONG MaxLen)
     ULONG Len = ObjectName->Length;
     WCHAR *Buf = ObjectName->Buffer;
 
-    //if (Dll_AlernateIpcNaming)
-    //{
-    //    if (Len >= Dll_BoxIpcPathLen * sizeof(WCHAR) &&
-    //            0 == Dll_NlsStrCmp(&Buf[Len - Dll_BoxIpcPathLen], Dll_BoxIpcPath, Dll_BoxIpcPathLen)) {
-    //
-    //        Buf[Len - Dll_BoxIpcPathLen] = L'\0';
-    //
-    //        ObjectName->Length -= (USHORT)Dll_BoxIpcPathLen;
-    //        ObjectName->MaximumLength = ObjectName->Length + sizeof(WCHAR);
-    //
-    //        return ObjectName->MaximumLength;
-    //    }
-    //}
-    //else
+    if (Dll_AlternateIpcNaming) {
+    if (Len >= Dll_BoxIpcPathLen * sizeof(WCHAR) &&
+            0 == Dll_NlsStrCmp(&Buf[Len / sizeof(WCHAR) - Dll_BoxIpcPathLen], Dll_BoxIpcPath, Dll_BoxIpcPathLen)) {
+
+        Buf[Len / sizeof(WCHAR) - Dll_BoxIpcPathLen] = L'\0';
+
+        ObjectName->Length -= (USHORT)(Dll_BoxIpcPathLen * sizeof(WCHAR));
+        ObjectName->MaximumLength = ObjectName->Length + sizeof(WCHAR);
+
+        return ObjectName->MaximumLength;
+    }
+    } else
     if (Len >= Dll_BoxIpcPathLen * sizeof(WCHAR) &&
             0 == Dll_NlsStrCmp(Buf, Dll_BoxIpcPath, Dll_BoxIpcPathLen)) {
 

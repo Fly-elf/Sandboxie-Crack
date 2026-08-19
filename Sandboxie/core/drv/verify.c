@@ -551,7 +551,7 @@ _FX NTSTATUS KphValidateCertificate()
     ULONG signatureSize = 0;
     PUCHAR signature = NULL;
 
-    const int line_size = 1024 * sizeof(WCHAR);
+    const int line_size = (CONF_LINE_LEN + 2) * sizeof(WCHAR);
     WCHAR *line = NULL; //512 wchars
     char *temp = NULL; //1024 chars, utf8 encoded
     int line_num = 0;
@@ -564,6 +564,8 @@ _FX NTSTATUS KphValidateCertificate()
     LARGE_INTEGER cert_date = { 0 };
     LARGE_INTEGER check_date = { 0 };
     LONG days = 0;
+    BOOLEAN node_lock = FALSE;
+    BOOLEAN node_pass = FALSE;
 
     Verify_CertInfo.State = 0; // clear
 
@@ -753,13 +755,11 @@ _FX NTSTATUS KphValidateCertificate()
                 goto CleanupExit;
             }
         }
-        else if (_wcsicmp(L"HWID", name) == 0) { // if HwId is specified it must be the right one
+        else if (_wcsicmp(L"HWID", name) == 0) { // if HwId is specified it must be the right one, new format allows for multiple hwids in one cert, only one entry must match
+            node_lock = TRUE;
             extern wchar_t g_uuid_str[40];
-            if (_wcsicmp(value, g_uuid_str) != 0) {
-                status = STATUS_FIRMWARE_IMAGE_INVALID;
-                goto CleanupExit;
-            }
-            Verify_CertInfo.locked = 1;
+            if (_wcsicmp(value, g_uuid_str) == 0)
+                node_pass = TRUE;
         }
             
     next:
@@ -791,7 +791,7 @@ _FX NTSTATUS KphValidateCertificate()
 
         CHAR* blocklist = NULL;
         ULONG blocklist_size = 0;
-        if (NT_SUCCESS(Api_GetSecureParamImpl(L"CertBlockList", &blocklist, &blocklist_size, TRUE)))
+        if (NT_SUCCESS(Api_GetSecureParamImpl(L"CertBlockList", &blocklist, &blocklist_size, TRUE))) // allocs blocklist
         {
             //DbgPrint("BAM: found valid blocklist, size: %d", blocklist_size);
 
@@ -823,6 +823,16 @@ _FX NTSTATUS KphValidateCertificate()
 
     if (!NT_SUCCESS(status))
         goto CleanupExit;
+
+    // signature OK
+    if (node_lock) {
+        Verify_CertInfo.locked = 1;
+        if (!node_pass) {
+            status = STATUS_FIRMWARE_IMAGE_INVALID;
+            goto CleanupExit;
+        }
+    }
+    
 
     Verify_CertInfo.active = 1;
 
@@ -858,13 +868,14 @@ _FX NTSTATUS KphValidateCertificate()
         if (CertDbg) DbgPrint("Sbie Build date: %02d.%02d.%d\n", timeFiled.Day, timeFiled.Month, timeFiled.Year);
     }
 
-    LARGE_INTEGER SystemTime;
-    LARGE_INTEGER LocalTime;
-    KeQuerySystemTime(&SystemTime);
-    ExSystemTimeToLocalTime(&SystemTime, &LocalTime);
+    LARGE_INTEGER UtcTime;
+    //LARGE_INTEGER LocalTime;
+    KeQuerySystemTime(&UtcTime);
+    //ExSystemTimeToLocalTime(&UtcTime, &LocalTime);
     if (CertDbg) {
-        RtlTimeToTimeFields(&LocalTime, &timeFiled);
-        DbgPrint("Sbie Current time: %02d:%02d:%02d %02d.%02d.%d\n"
+        //RtlTimeToTimeFields(&LocalTime, &timeFiled);
+        RtlTimeToTimeFields(&UtcTime, &timeFiled);
+        DbgPrint("Sbie Current UTC time: %02d:%02d:%02d %02d.%02d.%d\n"
             , timeFiled.Hour, timeFiled.Minute, timeFiled.Second, timeFiled.Day, timeFiled.Month, timeFiled.Year);
     }
 
@@ -875,6 +886,7 @@ _FX NTSTATUS KphValidateCertificate()
 
 
     LARGE_INTEGER expiration_date = { 0 };
+    BOOLEAN bNoCR = FALSE;
 
     if (!type) // type is mandatory 
         ;
@@ -921,6 +933,7 @@ _FX NTSTATUS KphValidateCertificate()
         if(days) expiration_date.QuadPart = cert_date.QuadPart + KphGetDateInterval((CSHORT)(days), 0, 0);
         else expiration_date.QuadPart = cert_date.QuadPart + KphGetDateInterval((CSHORT)(level ? _wtoi(level) : 7), 0, 0); // x days, default 7
         Verify_CertInfo.level = eCertMaxLevel;
+		bNoCR = TRUE;
     }
     else if (!level || _wcsicmp(level, L"STANDARD") == 0) // not used, default does not have explicit level
         Verify_CertInfo.level = eCertStandard;
@@ -968,7 +981,6 @@ _FX NTSTATUS KphValidateCertificate()
         
     if(CertDbg)     DbgPrint("Sbie Cert level: %X\n", Verify_CertInfo.level);
 
-    BOOLEAN bNoCR = FALSE;
     if (options) {
 
             if(CertDbg)     DbgPrint("Sbie Cert options: %S\n", options);
@@ -1033,9 +1045,9 @@ _FX NTSTATUS KphValidateCertificate()
     else if (expiration_date.QuadPart != -1) 
     {
         // check if this certificate is expired
-        if (expiration_date.QuadPart < LocalTime.QuadPart)
+        if (expiration_date.QuadPart < UtcTime.QuadPart)
             Verify_CertInfo.expired = 1;
-        Verify_CertInfo.expirers_in_sec = (ULONG)((expiration_date.QuadPart - LocalTime.QuadPart) / 10000000ll); // 100ns steps -> 1sec
+        Verify_CertInfo.expirers_in_sec = (ULONG)((expiration_date.QuadPart - UtcTime.QuadPart) / 10000000ll); // 100ns steps -> 1sec
 
         // check if a non subscription type certificate is valid for the current build
         if (!isSubscription && expiration_date.QuadPart < BuildDate.QuadPart)
@@ -1046,7 +1058,7 @@ _FX NTSTATUS KphValidateCertificate()
     if (isSubscription ? Verify_CertInfo.expired : Verify_CertInfo.outdated) 
     {
         if (!CERT_IS_TYPE(Verify_CertInfo, eCertEvaluation)) { // non eval certs get 1 month extra
-            if (expiration_date.QuadPart + KphGetDateInterval(0, 1, 0) >= LocalTime.QuadPart)
+            if (expiration_date.QuadPart + KphGetDateInterval(0, 1, 0) >= UtcTime.QuadPart)
                 Verify_CertInfo.grace_period = 1;
         }
 
@@ -1060,24 +1072,21 @@ _FX NTSTATUS KphValidateCertificate()
     UCHAR param_data = 0;
     UCHAR* param_ptr = &param_data;
     ULONG param_len = sizeof(param_data);
-    if (NT_SUCCESS(Api_GetSecureParamImpl(L"RequireLock", &param_ptr, &param_len, FALSE)) && param_data != 0)
+    if (NT_SUCCESS(Api_GetSecureParamImpl(L"RequireLock", &param_ptr, &param_len, FALSE)) && param_data != 0) // uses allocated param_ptr
         Verify_CertInfo.lock_req = 1;
 
     LANGID LangID = 0;
     if(NT_SUCCESS(ZwQueryInstallUILanguage(&LangID)) && (LangID == 0x0804))
         Verify_CertInfo.lock_req = 1;
 
-    if (Verify_CertInfo.lock_req && Verify_CertInfo.type != eCertEternal && Verify_CertInfo.type != eCertContributor) {
-
-        if (!Verify_CertInfo.locked)
+    if (Verify_CertInfo.lock_req && !bNoCR && Verify_CertInfo.type != eCertEternal && Verify_CertInfo.type != eCertContributor) {
+        // Check if a refresh of the cert is required
+        if (check_date.QuadPart + KphGetDateInterval(0, 4, 0) < UtcTime.QuadPart || !Verify_CertInfo.locked)
             Verify_CertInfo.active = 0;
-        if (!bNoCR) { // Check if a refresh of the cert is required
-            if (check_date.QuadPart + KphGetDateInterval(0, 4, 0) < LocalTime.QuadPart)
-                Verify_CertInfo.active = 0;
-            else if (check_date.QuadPart + KphGetDateInterval(0, 3, 0) < LocalTime.QuadPart)
-                Verify_CertInfo.grace_period = 1;
-        }
+        else if (check_date.QuadPart + KphGetDateInterval(0, 3, 0) < UtcTime.QuadPart)
+            Verify_CertInfo.grace_period = 1;
     }
+
 
 CleanupExit:
     if(CertDbg)     DbgPrint("Sbie Cert status: %08x; active: %d\n", status, Verify_CertInfo.active);

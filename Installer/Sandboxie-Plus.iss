@@ -292,6 +292,7 @@ begin
     'italian': Result := 'it';
     'japanese': Result := 'ja';
     'korean': Result := 'ko';
+    'norwegian': Result := 'nb_NO';
     'polish': Result := 'pl';
     'brazilianportuguese': Result := 'pt_BR';
     'portuguese': Result := 'pt_PT';
@@ -397,6 +398,16 @@ begin
 end;
 
 
+procedure KillShellExtensionHosts();
+var
+  ExecRet: Integer;
+begin
+  // Terminate only hosts that currently loaded our shell extension module.
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM dllhost.exe /FI "MODULES eq SbieShellExt.dll" /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM rundll32.exe /FI "MODULES eq SbieShellExt.dll" /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+end;
+
+
 //////////////////////////////////////////////////////
 // Installation Events
 //
@@ -425,7 +436,10 @@ begin
   begin
 
     // Stop processes.
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM Sandman.exe /IM SbieCtrl.exe /IM Start.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM SandMan.exe /IM SbieCtrl.exe /IM Start.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+
+    // Make sure shell extension hosts do not lock SbieShellExt.dll during file replacement.
+    KillShellExtensionHosts();
 
     Result := ShutdownSbie();
     exit;
@@ -495,6 +509,17 @@ begin
     SuppressibleMsgBox(CustomMessage('RequiresWin7OrLater'), mbError, MB_OK, MB_OK);
     Result := False;
     exit;
+  end;
+
+  // Restrict Windows 10 versions between 1507 (build 10240) and 1607 (build 14393).
+  if (Version.Major = 10) and (Version.Minor = 0) and
+     (Version.Build >= 10240) and (Version.Build <= 14393) then
+  begin
+    if MsgBox(CustomMessage('Qt6Win10Unsupported'), mbInformation, MB_YESNO) = IDNO then
+    begin
+    Result := False;
+    exit;
+    end;
   end;
 
   // Ask to uninstall Sandboxie Classic if found.
@@ -621,8 +646,8 @@ begin
   if (ButtonCount < 2) or (ButtonCount > 3) then
     exit;
 
-  // Require Sandman.exe to continue.
-  //if not FileExists(ExpandConstant('{app}\Sandman.exe')) then
+  // Require SandMan.exe to continue.
+  //if not FileExists(ExpandConstant('{app}\SandMan.exe')) then
   //  exit;
 
   // Make a list.
@@ -698,9 +723,9 @@ var
   ExecRet: Integer;
 begin
 
-  if FileExists(ExpandConstant('{app}\Sandman.exe')) then begin
+  if FileExists(ExpandConstant('{app}\SandMan.exe')) then begin
     Log('Debug: SandMan /ShellUninstall');
-    Exec(ExpandConstant('{app}\Sandman.exe'), '/ShellUninstall', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ExecRet);
+    Exec(ExpandConstant('{app}\SandMan.exe'), '/ShellUninstall', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ExecRet);
   end else begin
     Log('Debug: SbieCtrl /uninstall');
     Exec(ExpandConstant('{app}\sbiectrl.exe'), '/uninstall', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ExecRet);
@@ -731,7 +756,10 @@ begin
     exit;
 
   // Stop processes.
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM Sandman.exe /IM SbieCtrl.exe /IM Start.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM SandMan.exe /IM SbieCtrl.exe /IM Start.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ExecRet);
+
+  // Make sure shell extension hosts do not lock SbieShellExt.dll during removal.
+  KillShellExtensionHosts();
 
   // User to confirm extra files to remove.
   if not UninstallSilent then

@@ -12,6 +12,8 @@ HEADERS += ./stdafx.h \
     ./Models/SbieModel.h \
     ./Models/TraceModel.h \
     ./Models/MonitorModel.h \
+    ./Models/NtObjectModel.h \
+    ./Views/NtObjectView.h \
     ./Views/SbieView.h \
     ./Views/FileView.h \
     ./Views/TraceView.h \
@@ -25,11 +27,14 @@ HEADERS += ./stdafx.h \
     ./Helpers/ReadDirectoryChangesPrivate.h \
     ./Helpers/TabOrder.h \
     ./Helpers/IniHighlighter.h \
+    ./Helpers/MiniDumpFilter.h \
     ./Windows/RecoveryWindow.h \
     ./Windows/PopUpWindow.h \
     ./Windows/SnapshotsWindow.h \
     ./Windows/SettingsWindow.h \
     ./Windows/OptionsWindow.h \
+    ./Windows/PendingChanges.h \
+    ./Windows/EditorSettingsWindow.h \
     ./Windows/SelectBoxWindow.h \
     ./Windows/SupportDialog.h \
     ./Windows/TestProxyDialog.h \
@@ -41,6 +46,7 @@ HEADERS += ./stdafx.h \
     ./Windows/BoxImageWindow.h \
     ./Windows/CompressDialog.h \
     ./Windows/ExtractDialog.h \
+    ./Windows/RenameSandboxDialog.h \
     ./Engine/BoxEngine.h \
     ./Engine/ScriptManager.h \
     ./Engine/BoxObject.h \
@@ -51,7 +57,8 @@ HEADERS += ./stdafx.h \
     ./Engine/JSEngineExt.h \
     ./Engine/WizardObject.h \
     ./CustomStyles.h \
-    ./AddonManager.h
+    ./AddonManager.h \
+    ./BoxTransfer.h
 
 SOURCES += ./main.cpp \
     ../../SandboxieTools/Common/verify.c \
@@ -64,6 +71,8 @@ SOURCES += ./main.cpp \
     ./Models/TraceModel.cpp \
     ./Models/MonitorModel.cpp \
     ./Models/SbieModel.cpp \
+    ./Models/NtObjectModel.cpp \
+    ./Views/NtObjectView.cpp \
     ./Views/SbieView.cpp \
     ./Views/FileView.cpp \
     ./Views/TraceView.cpp \
@@ -78,7 +87,9 @@ SOURCES += ./main.cpp \
     ./Helpers/IniHighlighter.cpp \
     ./Helpers/WindowFromPointEx.cpp \
     ./Helpers/TabOrder.cpp \
+    ./Helpers/MiniDumpFilter.cpp \
     ./Windows/OptionsWindow.cpp \
+    ./Windows/EditorSettingsWindow.cpp \
     ./Windows/PopUpWindow.cpp \
     ./Windows/RecoveryWindow.cpp \
     ./Windows/SettingsWindow.cpp \
@@ -94,6 +105,7 @@ SOURCES += ./main.cpp \
     ./Windows/BoxImageWindow.cpp \
     ./Windows/CompressDialog.cpp \
     ./Windows/ExtractDialog.cpp \
+    ./Windows/RenameSandboxDialog.cpp \
     ./Engine/BoxEngine.cpp \
     ./Engine/ScriptManager.cpp \
     ./Engine/BoxObject.cpp \
@@ -101,9 +113,11 @@ SOURCES += ./main.cpp \
     ./Engine/SbieObject.cpp \
     ./Engine/JSEngineExt.cpp \
     ./Engine/SysObject.cpp \
-    ./AddonManager.cpp
+    ./AddonManager.cpp \
+    ./BoxTransfer.cpp
 
-FORMS += ./Forms/SelectBoxWindow.ui \
+FORMS += ./Forms/EditorSettingsWindow.ui \
+    ./Forms/SelectBoxWindow.ui \
     ./Forms/OptionsWindow.ui \
     ./Forms/PopUpWindow.ui \
     ./Forms/RecoveryWindow.ui \
@@ -112,6 +126,7 @@ FORMS += ./Forms/SelectBoxWindow.ui \
     ./Forms/BoxImageWindow.ui \
     ./Forms/CompressDialog.ui \
     ./Forms/ExtractDialog.ui \
+    ./Forms/RenameSandboxDialog.ui \
     ./Forms/TestProxyDialog.ui
 
 TRANSLATIONS += sandman_ar.ts \
@@ -119,10 +134,12 @@ TRANSLATIONS += sandman_ar.ts \
     sandman_en.ts \
     sandman_es.ts \
     sandman_fr.ts \
+    sandman_hi.ts \
     sandman_hu.ts \
     sandman_it.ts \
     sandman_ja.ts \
     sandman_ko.ts \
+    sandman_nb_NO.ts \
     sandman_nl.ts \
     sandman_pl.ts \
     sandman_pt_BR.ts \

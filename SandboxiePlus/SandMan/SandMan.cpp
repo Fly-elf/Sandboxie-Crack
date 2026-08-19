@@ -15,7 +15,6 @@
 #include <QtConcurrent>
 #include "../MiscHelpers/Common/SettingsWidgets.h"
 #include "Windows/OptionsWindow.h"
-#include <QProxyStyle>
 #include "../MiscHelpers/Common/TreeItemModel.h"
 #include "../MiscHelpers/Common/ListItemModel.h"
 #include "Views/TraceView.h"
@@ -39,10 +38,13 @@
 #include "Windows/BoxImageWindow.h"
 #include "Wizards/BoxAssistant.h"
 #include "Engine/BoxEngine.h"
+#include "BoxTransfer.h"
 #include "Engine/ScriptManager.h"
 #include "AddonManager.h"
 #include "Windows/PopUpWindow.h"
 #include "CustomStyles.h"
+#include <QElapsedTimer>
+#include <QScreen>
 
 CSbiePlusAPI* theAPI = NULL;
 
@@ -99,8 +101,15 @@ public:
 			else if (msg->message == WM_SHOWWINDOW && msg->wParam)
 			{
 				QWidget* pWidget = QWidget::find((WId)msg->hwnd);
-				if (theGUI && pWidget && (pWidget->windowType() | Qt::Dialog) == Qt::Dialog)
-					theGUI->UpdateTitleTheme(msg->hwnd);
+				if (theGUI && pWidget) {
+					if (theConf->GetBool("Options/CoverWindows", false) && pWidget->isWindow()) {
+						ProtectWindow((HWND)pWidget->winId(), 0x0);    // Clear
+						ProtectWindow((HWND)pWidget->winId());         // Apply protection
+					}
+
+					if (pWidget && (pWidget->windowType() | Qt::Dialog) == Qt::Dialog)
+						theGUI->UpdateTitleTheme(msg->hwnd);
+				}
 			}
 		}
 		return false;
@@ -112,6 +121,314 @@ HWND MainWndHandle = NULL;
 CSandMan* theGUI = NULL;
 
 extern QString g_PendingMessage;
+
+static int CGetTargetMonitorSetting()
+{
+	return theConf->GetInt("Options/WindowTargetMonitor", -1);
+}
+
+static int CGetNonMainTargetMonitorSetting()
+{
+	return theConf->GetInt("Options/NonMainWindowTargetMonitor", -1);
+}
+
+static int CGetMonitorFallbackSetting()
+{
+	int fallbackSetting = theConf->GetInt("Options/WindowMonitorFallback", -3);
+	if (fallbackSetting != -4 && fallbackSetting != -2 && fallbackSetting != -3 && fallbackSetting != 0)
+		fallbackSetting = -3;
+	return fallbackSetting;
+}
+
+static int CGetRecoveryTargetMonitorSetting()
+{
+	return theConf->GetInt("Options/RecoveryWindowTargetMonitor", CGetNonMainTargetMonitorSetting());
+}
+
+static int CGetNotificationTargetMonitorSetting()
+{
+	return theConf->GetInt("Options/NotificationWindowTargetMonitor", CGetNonMainTargetMonitorSetting());
+}
+
+static int CGetSupportDialogTargetMonitorSetting()
+{
+	return theConf->GetInt("Options/SupportDialogWindowTargetMonitor", CGetNonMainTargetMonitorSetting());
+}
+
+static int CGetWindowsMonitorNumber(const QString& screenName)
+{
+	int markerPos = screenName.lastIndexOf("DISPLAY", -1, Qt::CaseInsensitive);
+	if (markerPos < 0)
+		return -1;
+
+	QString tail = screenName.mid(markerPos + 7);
+	if (tail.isEmpty())
+		return -1;
+
+	int digitCount = 0;
+	while (digitCount < tail.length() && tail[digitCount].isDigit())
+		digitCount++;
+	if (digitCount == 0)
+		return -1;
+	bool ok = false;
+	int number = tail.left(digitCount).toInt(&ok);
+	return ok ? number : -1;
+}
+
+static QScreen* CGetTargetMonitorBySetting(int monitorSetting);
+
+static int CGetDisplayNumberForScreen(QScreen* pScreen)
+{
+	if (!pScreen)
+		return -1;
+
+	QRect geometry = pScreen->geometry();
+	QPoint center = geometry.center();
+	POINT point = { center.x(), center.y() };
+	HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+	if (!monitor)
+		return -1;
+
+	MONITORINFOEXW monitorInfo;
+	memset(&monitorInfo, 0, sizeof(monitorInfo));
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfoW(monitor, &monitorInfo))
+		return -1;
+
+	QString deviceName = QString::fromWCharArray(monitorInfo.szDevice);
+	return CGetWindowsMonitorNumber(deviceName);
+}
+
+static bool CIsMonitorAttachedToDesktop(HMONITOR monitor)
+{
+	if (!monitor)
+		return false;
+
+	MONITORINFOEXW monitorInfo;
+	memset(&monitorInfo, 0, sizeof(monitorInfo));
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfoW(monitor, &monitorInfo))
+		return false;
+
+	DISPLAY_DEVICEW displayDevice;
+	memset(&displayDevice, 0, sizeof(displayDevice));
+	displayDevice.cb = sizeof(displayDevice);
+	if (!EnumDisplayDevicesW(monitorInfo.szDevice, 0, &displayDevice, 0))
+		return false;
+
+	return (displayDevice.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0;
+}
+
+static bool CIsScreenUsable(QScreen* pScreen)
+{
+	if (!pScreen)
+		return false;
+
+	QRect geometry = pScreen->geometry();
+	if (!geometry.isValid())
+		return false;
+
+	QPoint center = geometry.center();
+	POINT point = { center.x(), center.y() };
+	HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
+	if (!monitor)
+		return false;
+
+	return CIsMonitorAttachedToDesktop(monitor);
+}
+
+static QScreen* CGetScreenFromMonitorHandle(HMONITOR monitor)
+{
+	if (!monitor)
+		return NULL;
+
+	MONITORINFOEXW monitorInfo;
+	memset(&monitorInfo, 0, sizeof(monitorInfo));
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfoW(monitor, &monitorInfo))
+		return NULL;
+
+	int displayNumber = CGetWindowsMonitorNumber(QString::fromWCharArray(monitorInfo.szDevice));
+	if (displayNumber > 0)
+		return CGetTargetMonitorBySetting(displayNumber);
+
+	QPoint center((monitorInfo.rcMonitor.left + monitorInfo.rcMonitor.right) / 2, (monitorInfo.rcMonitor.top + monitorInfo.rcMonitor.bottom) / 2);
+	QScreen* screen = QGuiApplication::screenAt(center);
+	if (screen)
+		return screen;
+
+	return QGuiApplication::primaryScreen();
+}
+
+static QScreen* CGetActiveScreen()
+{
+	POINT cursorPos;
+	if (GetCursorPos(&cursorPos)) {
+		HMONITOR monitor = MonitorFromPoint(cursorPos, MONITOR_DEFAULTTONEAREST);
+		QScreen* screen = CGetScreenFromMonitorHandle(monitor);
+		if (screen)
+			return screen;
+	}
+
+	HWND foregroundWindow = GetForegroundWindow();
+	if (foregroundWindow) {
+		HMONITOR monitor = MonitorFromWindow(foregroundWindow, MONITOR_DEFAULTTONULL);
+		QScreen* screen = CGetScreenFromMonitorHandle(monitor);
+		if (screen)
+			return screen;
+	}
+
+	return QGuiApplication::primaryScreen();
+}
+
+static QScreen* CGetTargetMonitorBySetting(int monitorSetting)
+{
+	if (monitorSetting < 0)
+		return NULL;
+
+	if (monitorSetting == 0)
+		return QGuiApplication::primaryScreen();
+
+	QList<QScreen*> screens = QGuiApplication::screens();
+	for (int i = 0; i < screens.count(); i++) {
+		if (CGetDisplayNumberForScreen(screens[i]) == monitorSetting)
+			return screens[i];
+	}
+
+	int legacyIndex = monitorSetting - 1;
+	if (legacyIndex >= 0 && legacyIndex < screens.count())
+		return screens[legacyIndex];
+
+	return NULL;
+}
+
+static QScreen* CGetMainWindowScreen()
+{
+	if (!theGUI)
+		return QGuiApplication::primaryScreen();
+
+	QRect frame = theGUI->frameGeometry();
+	QScreen* pScreen = QGuiApplication::screenAt(frame.center());
+	if (!pScreen)
+		pScreen = theGUI->screen();
+	if (!pScreen)
+		pScreen = QGuiApplication::primaryScreen();
+	return pScreen;
+}
+
+static QScreen* CGetConfiguredFallbackScreen(QWidget* pWidget, QScreen* pSourceScreen)
+{
+	int fallbackSetting = CGetMonitorFallbackSetting();
+	if (fallbackSetting == -4) {
+		if (pSourceScreen && CIsScreenUsable(pSourceScreen))
+			return pSourceScreen;
+		return NULL;
+	}
+
+	if (fallbackSetting == -2) {
+		if (pWidget != theGUI) {
+			QScreen* pMainScreen = CGetMainWindowScreen();
+			if (pMainScreen)
+				return pMainScreen;
+		}
+		if (pSourceScreen)
+			return pSourceScreen;
+		return CGetMainWindowScreen();
+	}
+
+	if (fallbackSetting == 0)
+		return QGuiApplication::primaryScreen();
+
+	if (fallbackSetting == -3)
+		return CGetActiveScreen();
+
+	return CGetActiveScreen();
+}
+
+static void CApplyConfiguredMonitorPlacement(QWidget* pWidget)
+{
+	if (!pWidget || !pWidget->isWindow())
+		return;
+
+	QRect frame = pWidget->frameGeometry();
+	if (!frame.isValid())
+		return;
+
+	QScreen* pSourceScreen = QGuiApplication::screenAt(frame.center());
+	if (!pSourceScreen)
+		pSourceScreen = pWidget->screen();
+	if (!pSourceScreen)
+		pSourceScreen = QGuiApplication::primaryScreen();
+	if (!pSourceScreen)
+		return;
+
+	int monitorSetting = -1;
+	if (pWidget == theGUI)
+		monitorSetting = CGetTargetMonitorSetting();
+	else if (qobject_cast<CPopUpWindow*>(pWidget))
+		monitorSetting = CGetNotificationTargetMonitorSetting();
+	else if (qobject_cast<CSupportDialog*>(pWidget))
+		monitorSetting = CGetSupportDialogTargetMonitorSetting();
+	else if (qobject_cast<CRecoveryWindow*>(pWidget) || qobject_cast<CRecoveryLogWnd*>(pWidget))
+		monitorSetting = CGetRecoveryTargetMonitorSetting();
+	else
+		monitorSetting = CGetNonMainTargetMonitorSetting();
+
+	if (monitorSetting < 0 && monitorSetting != -2 && monitorSetting != -3) {
+		QScreen* currentScreen = pSourceScreen;
+		if (currentScreen && CIsScreenUsable(currentScreen))
+			return;
+
+		QScreen* fallbackScreen = CGetConfiguredFallbackScreen(pWidget, pSourceScreen);
+		if (!fallbackScreen)
+			return;
+
+		QRect targetArea = fallbackScreen->availableGeometry();
+		int minX = targetArea.left();
+		int minY = targetArea.top();
+		int maxX = targetArea.left() + qMax(0, targetArea.width() - frame.width());
+		int maxY = targetArea.top() + qMax(0, targetArea.height() - frame.height());
+		int newX = qBound(minX, frame.left(), maxX);
+		int newY = qBound(minY, frame.top(), maxY);
+		pWidget->move(newX, newY);
+		return;
+}
+
+	QScreen* pTargetScreen = NULL;
+	if (monitorSetting == -2) {
+		if (pWidget == theGUI)
+			return;
+		pTargetScreen = CGetMainWindowScreen();
+	}
+	else if (monitorSetting == -3)
+		pTargetScreen = CGetActiveScreen();
+	else
+		pTargetScreen = CGetTargetMonitorBySetting(monitorSetting);
+
+	if (pTargetScreen && !CIsScreenUsable(pTargetScreen))
+		pTargetScreen = CGetConfiguredFallbackScreen(pWidget, pSourceScreen);
+
+	if (!pTargetScreen)
+		pTargetScreen = CGetConfiguredFallbackScreen(pWidget, pSourceScreen);
+	if (!pTargetScreen)
+		return;
+
+	QRect sourceArea = pSourceScreen->availableGeometry();
+	QRect targetArea = pTargetScreen->availableGeometry();
+
+	int relX = frame.left() - sourceArea.left();
+	int relY = frame.top() - sourceArea.top();
+
+	int minX = targetArea.left();
+	int minY = targetArea.top();
+	int maxX = targetArea.left() + qMax(0, targetArea.width() - frame.width());
+	int maxY = targetArea.top() + qMax(0, targetArea.height() - frame.height());
+
+	int newX = qBound(minX, targetArea.left() + relX, maxX);
+	int newY = qBound(minY, targetArea.top() + relY, maxY);
+
+	pWidget->move(newX, newY);
+}
 
 
 CSandMan::CSandMan(QWidget *parent)
@@ -134,6 +451,9 @@ CSandMan::CSandMan(QWidget *parent)
 	QDesktopServices::setUrlHandler("sbie", this, "OpenUrl");
 
 	m_StartMenuUpdatePending = false;
+	m_MessageLogPlainItemModeUntil = 0;
+	m_MessageLogFlushPending = false;
+	m_FlushingMessageLog = false;
 
 	m_ThemeUpdatePending = false;
 	m_DefaultStyle = QApplication::style()->objectName();
@@ -177,6 +497,8 @@ CSandMan::CSandMan(QWidget *parent)
 
 	m_bOnTop = false;
 	m_bExit = false;
+	m_LastCheckInternetMs = 0;
+	m_bHasInternet = true;
 
 	m_ImDiskReady = true;
 
@@ -195,6 +517,8 @@ CSandMan::CSandMan(QWidget *parent)
 #else
 	QString appTitle = tr("Sandboxie-Plus v%1").arg(GetVersion());
 #endif
+	if (IsElevated())
+		appTitle.append(tr(" (Administrator)"));
 
 	this->setWindowTitle(appTitle);
 
@@ -232,6 +556,12 @@ CSandMan::CSandMan(QWidget *parent)
 
 	CreateUI();
 	setCentralWidget(m_pMainWidget);
+
+	m_iRefreshTick = 0;
+
+	m_pSummaryInfo = new QLabel();
+	m_pSummaryInfo->setContentsMargins(4, 0, 8, 0);
+	statusBar()->addPermanentWidget(m_pSummaryInfo, 1); // stretch=1 → left-aligned summary
 
 	m_pTraceInfo = new QLabel();
 	m_pDisabledForce = new QLabel();
@@ -413,6 +743,7 @@ void CSandMan::CreateUI()
 	statusBar()->setVisible(iViewMode == 1);
 
 	if(m_pKeepTerminated) m_pKeepTerminated->setChecked(theConf->GetBool("Options/KeepTerminated"));
+	if(m_pAutoExpand) m_pAutoExpand->setChecked(theConf->GetBool("Options/AutoExpandTree", true));
 	if(m_pShowAllSessions) m_pShowAllSessions->setChecked(theConf->GetBool("Options/ShowAllSessions"));
 
 	m_pWndTopMost->setChecked(theConf->GetBool("Options/AlwaysOnTop", false));
@@ -510,8 +841,10 @@ void CSandMan::CreateMenus(bool bAdvanced)
 	m_pMenuFile = m_pMenuBar->addMenu(tr("&Sandbox"));
 		m_pNewBox = m_pMenuFile->addAction(CSandMan::GetIcon("NewBox"), tr("Create New Box"), this, SLOT(OnSandBoxAction()));
 		m_pNewGroup = m_pMenuFile->addAction(CSandMan::GetIcon("Group"), tr("Create Box Group"), this, SLOT(OnSandBoxAction()));
-		m_pImportBox = m_pMenuFile->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Box"), this, SLOT(OnSandBoxAction()));
-		m_pImportBox->setEnabled(CArchive::IsInit());
+		m_pImportBoxes = m_pMenuFile->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Boxes"), this, SLOT(OnSandBoxAction()));
+		m_pImportBoxes->setEnabled(CArchive::IsInit());
+		m_pExportBoxes = m_pMenuFile->addAction(CSandMan::GetIcon("PackBox"), tr("Export Boxes"), this, SLOT(OnSandBoxAction()));
+		m_pExportBoxes->setEnabled(CArchive::IsInit());
 		m_pMenuFile->addSeparator();
 		m_pRunBoxed = m_pMenuFile->addAction(CSandMan::GetIcon("Run"), tr("Run Sandboxed"), this, SLOT(OnSandBoxAction()));
 		m_pPauseAll = m_pMenuFile->addAction(CSandMan::GetIcon("Pause"), tr("Suspend All Processes"), this, SLOT(OnPauseAll()));
@@ -544,7 +877,7 @@ void CSandMan::CreateMenus(bool bAdvanced)
 		m_pMenuFile->addSeparator();
 		m_pRestart = m_pMenuFile->addAction(CSandMan::GetIcon("Shield9"), tr("Restart As Admin"), this, SLOT(OnRestartAsAdmin()));
 		m_pRestart->setEnabled(!IsElevated());
-		m_pExit = m_pMenuFile->addAction(CSandMan::GetIcon("Exit"), tr("Exit"), this, SLOT(OnExit()));
+		m_pExit = m_pMenuFile->addAction(CSandMan::GetIcon("Quit"), tr("Exit"), this, SLOT(OnExit()));
 
 
 	m_pMenuView = m_pMenuBar->addMenu(tr("&View"));
@@ -588,6 +921,9 @@ void CSandMan::CreateMenus(bool bAdvanced)
 
 		m_pKeepTerminated = m_pMenuView->addAction(CSandMan::GetIcon("Keep"), tr("Keep terminated"), this, SLOT(OnProcView()));
 		m_pKeepTerminated->setCheckable(true);
+
+		m_pAutoExpand = m_pMenuView->addAction(CSandMan::GetIcon("Expand"), tr("Auto Expand Tree"), this, SLOT(OnAutoExpand()));
+		m_pAutoExpand->setCheckable(true);
 	}
 	else {
 		m_pCleanUpMenu = NULL;
@@ -597,6 +933,8 @@ void CSandMan::CreateMenus(bool bAdvanced)
 			m_pCleanUpRecovery = NULL;
 
 		m_pKeepTerminated = NULL;
+
+		m_pAutoExpand = NULL;
 	}
 		m_pMenuView->addSeparator();
 		m_pEnableMonitoring = m_pMenuView->addAction(CSandMan::GetIcon("SetLogging"), tr("Trace Logging"), this, SLOT(OnMonitoring()));
@@ -700,7 +1038,8 @@ void CSandMan::CreateOldMenus()
 				//m_pUpdateCore = NULL;
 		}
 		m_pRestart = m_pMenuFile->addAction(CSandMan::GetIcon("Shield9"), tr("Restart As Admin"), this, SLOT(OnRestartAsAdmin()));
-		m_pExit = m_pMenuFile->addAction(CSandMan::GetIcon("Exit"), tr("Exit"), this, SLOT(OnExit()));
+		m_pRestart->setEnabled(!IsElevated());
+		m_pExit = m_pMenuFile->addAction(CSandMan::GetIcon("Quit"), tr("Exit"), this, SLOT(OnExit()));
 
 	m_pMenuView = m_pMenuBar->addMenu(tr("&View"));
 
@@ -729,6 +1068,7 @@ void CSandMan::CreateOldMenus()
 			m_pCleanUpTrace = NULL;
 			m_pCleanUpRecovery = NULL;
 		m_pKeepTerminated = NULL;
+		m_pAutoExpand = NULL;
 
 	m_pSandbox = m_pMenuBar->addMenu(tr("&Sandbox"));
 
@@ -737,8 +1077,10 @@ void CSandMan::CreateOldMenus()
 		m_pSandbox->addSeparator();
 		m_pNewBox = m_pSandbox->addAction(CSandMan::GetIcon("NewBox"), tr("Create New Sandbox"), this, SLOT(OnSandBoxAction()));
 		m_pNewGroup = m_pSandbox->addAction(CSandMan::GetIcon("Group"), tr("Create New Group"), this, SLOT(OnSandBoxAction()));
-		m_pImportBox = m_pSandbox->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Sandbox"), this, SLOT(OnSandBoxAction()));
-		m_pImportBox->setEnabled(CArchive::IsInit());
+		m_pImportBoxes = m_pSandbox->addAction(CSandMan::GetIcon("UnPackBox"), tr("Import Sandboxes"), this, SLOT(OnSandBoxAction()));
+		m_pImportBoxes->setEnabled(CArchive::IsInit());
+		m_pExportBoxes = m_pSandbox->addAction(CSandMan::GetIcon("PackBox"), tr("Export Sandboxes"), this, SLOT(OnSandBoxAction()));
+		m_pExportBoxes->setEnabled(CArchive::IsInit());
 
 		QAction* m_pSetContainer = m_pSandbox->addAction(CSandMan::GetIcon("Advanced"), tr("Set Container Folder"), this, SLOT(OnSettingsAction()));
 		m_pSetContainer->setData("Sandbox");
@@ -787,7 +1129,7 @@ void CSandMan::OnView(QAction* pAction)
 	if (iView == 1) { // files
 		m_pBoxCombo->clear();
 		foreach(const CSandBoxPtr & pBox, theAPI->GetAllBoxes())
-			m_pBoxCombo->addItem(tr("Sandbox %1").arg(pBox->GetName().replace("_", "")), pBox->GetName());
+			m_pBoxCombo->addItem(tr("Sandbox %1").arg(GetBoxDisplayName(pBox, CSandBoxPlus::eDisplayCompact)), pBox->GetName());
 		m_pBoxCombo->setCurrentIndex(m_pBoxCombo->findData(theAPI->GetGlobalSettings()->GetText("DefaultBox", "DefaultBox")));
 	}
 }
@@ -833,7 +1175,7 @@ QList<ToolBarAction> CSandMan::GetAvailableToolBarActions()
 			ToolBarAction{ "NewBoxMenu", nullptr, tr("New-Box Menu") },  //tr: Name of button in toolbar for showing actions new box, new group, import},
 			ToolBarAction{ "NewBox", m_pNewBox },
 			ToolBarAction{ "NewGroup", m_pNewGroup },
-			ToolBarAction{ "ImportBox", m_pImportBox },
+			ToolBarAction{ "ImportBox", m_pImportBoxes },
 			ToolBarAction{ "", nullptr },        // separator
 			ToolBarAction{ "RunBoxed", m_pRunBoxed },
 			ToolBarAction{ "IsBoxed", m_pWndFinder },
@@ -843,6 +1185,7 @@ QList<ToolBarAction> CSandMan::GetAvailableToolBarActions()
 			ToolBarAction{ "", nullptr },        // separator
 			ToolBarAction{ "CleanUpMenu", nullptr, tr("Cleanup") }, //tr: Name of button in toolbar for cleanup-all action
 			ToolBarAction{ "KeepTerminated", m_pKeepTerminated },
+			ToolBarAction{ "AutoExpand", m_pAutoExpand },
 			ToolBarAction{ "Refresh", m_pRefreshAll },
 			ToolBarAction{ "", nullptr },        // separator
 			ToolBarAction{ "BrowseFiles", m_pMenuBrowse },
@@ -1004,7 +1347,7 @@ void CSandMan::CreateToolBar(bool rebuild)
 			auto menu = new QMenu(but);
 			menu->addAction(m_pNewBox);
 			menu->addAction(m_pNewGroup);
-			menu->addAction(m_pImportBox);
+			menu->addAction(m_pImportBoxes);
 			but->setMenu(menu);
 			QObject::connect(but, &QToolButton::clicked, this, [this]() {GetBoxView()->AddNewBox();});
 			m_pNewBoxButton = but;
@@ -1165,6 +1508,12 @@ void CSandMan::CreateView(int iViewMode)
 {
 	m_pBoxView = new CSbieView();
 	connect(m_pBoxView, SIGNAL(BoxSelected()), this, SLOT(OnBoxSelected()));
+	connect(m_pBoxView->GetSbieModel(), &CSbieModel::ResourceStatsUpdated,
+		this, [this](int total, int active, int procs, quint64 mem) {
+		if (m_pSummaryInfo)
+			m_pSummaryInfo->setText(tr("Boxes: %1 (%2 active)  |  Processes: %3  |  Memory: %4")
+				.arg(total).arg(active).arg(procs).arg(FormatSize(mem)));
+	});
 	m_pFileView = new CFileView();
 
 	if (iViewMode != 1) {
@@ -1251,9 +1600,15 @@ void CSandMan::CreateView(int iViewMode)
 
 		m_pMessageLog->GetView()->setSelectionMode(QAbstractItemView::ExtendedSelection);
 		m_pMessageLog->GetView()->setSortingEnabled(false);
+		m_pMessageLog->GetView()->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+		connect(m_pMessageLog->GetTree(), SIGNAL(itemDoubleClicked(QTreeWidgetItem*, int)), this, SLOT(OnMessageLogDblClick(QTreeWidgetItem*, int)));
 
 		m_pLogTabs->addTab(m_pMessageLog, tr("Sbie Messages"));
 
+		m_PendingMessageLog.clear();
+		m_MessageLogPlainItemModeUntil = 0;
+		m_MessageLogFlushPending = false;
+		m_FlushingMessageLog = false;
 		foreach(const SSbieMsg & Msg, m_MessageLog) {
 			QString Link, Message = FormatSbieMessage(Msg.MsgCode, Msg.MsgData, Msg.ProcessName, &Link);
 			AddLogMessage(Msg.TimeStamp, Message, Link);
@@ -1285,6 +1640,8 @@ void CSandMan::CreateView(int iViewMode)
 		m_pRecoveryLog->GetView()->setSortingEnabled(false);
 
 		m_pLogTabs->addTab(m_pRecoveryLog, tr("Recovery Log"));
+		//
+
 		//
 	}
 	else {
@@ -1619,6 +1976,8 @@ void CSandMan::SafeShow(QWidget* pWidget)
 		Lock = false;
 	} else
 		pWidget->show();
+
+	CApplyConfiguredMonitorPlacement(pWidget);
 	pWidget->setProperty("windowOpacity", 1.0);
 }
 
@@ -1760,8 +2119,11 @@ void CSandMan::dragEnterEvent(QDragEnterEvent* e)
 
 bool CSandMan::RunSandboxed(const QStringList& Commands, QString BoxName, const QString& WrkDir, bool bShowFCP)
 {
-	if (BoxName.isEmpty())
+	if (BoxName.isEmpty()) {
 		BoxName = theAPI->GetGlobalSettings()->GetText("DefaultBox", "DefaultBox");
+		if(theConf->GetBool("Options/RememberLastBox", false))
+			BoxName = theConf->GetString("Options/LastUsedBox", BoxName);
+	}
 	CSelectBoxWindow* pSelectBoxWindow = new CSelectBoxWindow(Commands, BoxName, WrkDir, g_GUIParent);
 	if (bShowFCP) pSelectBoxWindow->ShowFCP();
 	connect(this, SIGNAL(Closed()), pSelectBoxWindow, SLOT(close()));
@@ -1771,6 +2133,9 @@ bool CSandMan::RunSandboxed(const QStringList& Commands, QString BoxName, const 
 
 SB_RESULT(quint32) CSandMan::RunStart(const QString& BoxName, const QString& Command, CSbieAPI::EStartFlags Flags, const QString& WorkingDir, QProcess* pProcess)
 {
+	if(theConf->GetBool("Options/RememberLastBox", false))
+		theConf->SetValue("Options/LastUsedBox", BoxName);
+
 	auto pBoxEx = theAPI->GetBoxByName(BoxName).objectCast<CSandBoxPlus>();
 	if (pBoxEx && pBoxEx->UseImageFile() && pBoxEx->GetMountRoot().isEmpty()) 
 	{
@@ -1834,6 +2199,10 @@ void CSandMan::timerEvent(QTimerEvent* pEvent)
 		SB_STATUS Status = theAPI->ReloadBoxes();
 
 		UpdateProcesses();
+
+		// Refresh CPU/memory columns in the main view every 2 seconds
+		if (m_pBoxView && (++m_iRefreshTick % 2 == 0))
+			m_pBoxView->GetSbieModel()->RefreshResourceStats();
 
 		bForceProcessDisabled = theAPI->AreForceProcessDisabled();
 		m_pDisableForce->setChecked(bForceProcessDisabled);
@@ -1923,8 +2292,17 @@ void CSandMan::timerEvent(QTimerEvent* pEvent)
 
 	m_pBoxView->Refresh();
 
-	if(!IsSilentMode() && CheckInternet()) // do not check for updates when in presentation/game mode
-		m_pUpdater->Process();
+	if(!IsSilentMode()) // do not check for updates when in presentation/game mode
+	{
+		quint64 CurrentTimeMs = QDateTime::currentMSecsSinceEpoch();
+		if (CurrentTimeMs - m_LastCheckInternetMs >= 60000) // check internet every 60 seconds
+		{
+			m_LastCheckInternetMs = CurrentTimeMs;
+			m_bHasInternet = CheckInternet();
+		}
+		if (m_bHasInternet)
+			m_pUpdater->Process();
+	}
 
 	if (!m_MissingTemplates.isEmpty())
 	{
@@ -2114,6 +2492,13 @@ SB_STATUS CSandMan::DeleteBoxContent(const CSandBoxPtr& pBox, EDelMode Mode, boo
 	}
 
 	auto pBoxEx = pBox.objectCast<CSandBoxPlus>();
+	const bool UseAsyncDelete = theConf->GetBool("Options/UseAsyncBoxOps", false) || theGUI->IsSilentMode();
+	QString AutoDeleteSnapshotTarget = pBox->GetText("AutoDeleteSnapshotTarget", QString(), true, true, true);
+	if (AutoDeleteSnapshotTarget.compare("Current", Qt::CaseInsensitive) != 0
+	 && AutoDeleteSnapshotTarget.compare("Default", Qt::CaseInsensitive) != 0)
+		AutoDeleteSnapshotTarget = UseAsyncDelete ? "Default" : "Current";
+	const bool UseCurrentSnapshot = Mode == eAuto
+		&& AutoDeleteSnapshotTarget.compare("Current", Qt::CaseInsensitive) == 0;
 
 	if (pBoxEx->UseImageFile()) {
 		if (pBoxEx->GetMountRoot().isEmpty()) {
@@ -2136,11 +2521,16 @@ SB_STATUS CSandMan::DeleteBoxContent(const CSandBoxPtr& pBox, EDelMode Mode, boo
 		// schedule async OnBoxDelete triggers and clean up
 		//
 
-		if (theConf->GetBool("Options/UseAsyncBoxOps", false) || theGUI->IsSilentMode())
-			return pBoxEx->DeleteContentAsync(DeleteSnapshots);
+		if (UseAsyncDelete)
+			return pBoxEx->DeleteContentAsync(DeleteSnapshots, UseCurrentSnapshot);
 	}
 
 	m_iDeletingContent++;
+	if (m_pTrayIcon) {
+		bool isConnected = theAPI->IsConnected();
+		m_pTrayIcon->setIcon(GetTrayIcon(isConnected));
+		m_pTrayIcon->setToolTip(GetTrayText(isConnected));
+	}
 
 	if (Mode != eForDelete) {
 
@@ -2167,23 +2557,28 @@ SB_STATUS CSandMan::DeleteBoxContent(const CSandBoxPtr& pBox, EDelMode Mode, boo
 		//
 
 		SB_PROGRESS Status;
-		if (Mode != eForDelete && !DeleteSnapshots && pBox->HasSnapshots()) { // in auto delete mode always return to last snapshot
+		if (Mode != eForDelete && !DeleteSnapshots && pBox->HasSnapshots()) {
 			QString Current;
 			QString Default = pBox->GetDefaultSnapshot(&Current);
-			Status = pBox->SelectSnapshot(Mode == eAuto ? Current : Default);
+			Status = pBox->SelectSnapshot(UseCurrentSnapshot ? Current : Default);
 		}
 		else // if there are no snapshots just use the normal cleaning procedure
 			Status = pBox->CleanBox();
 
 		Ret = Status;
 		if (Status.GetStatus() == OP_ASYNC) {
-			Ret = AddAsyncOp(Status.GetValue(), true, tr("Auto Deleting %1 Content").arg(pBox->GetName()));
+			Ret = AddAsyncOp(Status.GetValue(), true, tr("Auto Deleting %1 Content").arg(GetBoxDisplayName(pBox)));
 			OnBoxCleaned(qobject_cast<CSandBoxPlus*>(pBox.data()));
 		}
 	}
 
 finish:
-	m_iDeletingContent--;
+	m_iDeletingContent = qMax(0, m_iDeletingContent - 1);
+	if (m_pTrayIcon) {
+		bool isConnected = theAPI->IsConnected();
+		m_pTrayIcon->setIcon(GetTrayIcon(isConnected));
+		m_pTrayIcon->setToolTip(GetTrayText(isConnected));
+	}
 	return Ret;
 }
 
@@ -2410,7 +2805,7 @@ void CSandMan::OnBoxClosed(const CSandBoxPtr& pBox)
 				return;
 
 			if (theConf->GetBool("Options/AutoBoxOpsNotify", false))
-				OnLogMessage(tr("Auto deleting content of %1").arg(pBox->GetName()), true);
+				OnLogMessage(tr("Auto deleting content of %1").arg(GetBoxDisplayName(pBox)), true);
 
 			DeleteBoxContent(pBox, eAuto, DeleteSnapshots);
 		}
@@ -2422,7 +2817,7 @@ void CSandMan::OnBoxCleaned(CSandBoxPlus* pBoxEx)
 	if (pBoxEx->GetBool("AutoRemove", false))
 	{
 		if (theConf->GetBool("Options/AutoBoxOpsNotify", false))
-			OnLogMessage(tr("Auto removing sandbox %1").arg(pBoxEx->GetName()), true);
+			OnLogMessage(tr("Auto removing sandbox %1").arg(pBoxEx->GetDisplayName()), true);
 
 		pBoxEx->RemoveBox();
 		return;
@@ -2533,7 +2928,7 @@ void CSandMan::OnStatusChanged()
 
 			auto AllBoxes = theAPI->GetAllBoxes();
 
-			m_pBoxView->ClearUserUIConfig(AllBoxes);
+			m_pBoxView->ClearUserUIConfig(AllBoxes, true);
 
 			foreach(const QString & Key, theConf->ListKeys("SizeCache")) {
 				if (!AllBoxes.contains(Key.toLower()) || !theConf->GetBool("Options/WatchBoxSize", false))
@@ -2698,11 +3093,13 @@ void CSandMan::UpdateState()
 	m_iIconDisabled = -1;
 	m_bIconBusy = false;
 	m_bIconSun = false;
+	m_iDeletingContent = 0;
 
 	m_pRunBoxed->setEnabled(isConnected);
 	m_pNewBox->setEnabled(isConnected);
 	m_pNewGroup->setEnabled(isConnected);
-	m_pImportBox->setEnabled(isConnected);
+	m_pImportBoxes->setEnabled(isConnected);
+	m_pExportBoxes->setEnabled(isConnected);
 	m_pPauseAll->setEnabled(isConnected);
 	m_pEmptyAll->setEnabled(isConnected);
 	m_pLockAll->setEnabled(isConnected);
@@ -2887,55 +3284,157 @@ void CSandMan::AddLogMessage(const QString& Message)
 
 void CSandMan::AddLogMessage(const QDateTime& TimeStamp, const QString& Message, const QString& Link)
 {
+	if (!m_pMessageLog)
+		return;
+
+	if (!m_PendingMessageLog.isEmpty() && m_PendingMessageLog.last().Message == Message) {
+		m_PendingMessageLog.last().Count++;
+		return;
+	}
+
+	SPendingMessageLogEntry Entry;
+	Entry.TimeStamp = TimeStamp;
+	Entry.Message = Message;
+	Entry.Link = Link;
+	Entry.Count = 1;
+	m_PendingMessageLog.append(Entry);
+	ScheduleMessageLogFlush();
+}
+
+void CSandMan::ScheduleMessageLogFlush()
+{
+	if (m_MessageLogFlushPending)
+		return;
+
+	m_MessageLogFlushPending = true;
+	QTimer::singleShot(10, this, SLOT(OnFlushMessageLog()));
+}
+
+void CSandMan::OnFlushMessageLog()
+{
+	m_MessageLogFlushPending = false;
+
+	if (m_FlushingMessageLog)
+		return;
+
+	if (m_PendingMessageLog.isEmpty())
+		return;
+
+	if (!m_pMessageLog) {
+		m_PendingMessageLog.clear();
+		m_MessageLogPlainItemModeUntil = 0;
+		return;
+	}
+
+	m_FlushingMessageLog = true;
+
+	QTreeWidget* pTree = m_pMessageLog->GetTree();
+	const bool UpdatesEnabled = pTree->updatesEnabled();
+	const bool ScrollToBottom = m_pMessageLog->GetView()->verticalScrollBar()->value() == m_pMessageLog->GetView()->verticalScrollBar()->maximum();
+	pTree->setUpdatesEnabled(false);
+
+	const qint64 MaxFlushTimeNs = 8 * 1000 * 1000;
+	const int MinMessagesPerFlush = 25;
+	const int MaxMessagesPerFlush = 500;
+	QElapsedTimer FlushTimer;
+	FlushTimer.start();
+
+	int ProcessedCount = 0;
+	while (!m_PendingMessageLog.isEmpty())
+	{
+		SPendingMessageLogEntry Entry = m_PendingMessageLog.takeFirst();
+		AddLogMessageNow(Entry.TimeStamp, Entry.Message, Entry.Link, Entry.Count);
+		ProcessedCount++;
+
+		if (ProcessedCount >= MaxMessagesPerFlush)
+			break;
+		if (ProcessedCount >= MinMessagesPerFlush && FlushTimer.nsecsElapsed() >= MaxFlushTimeNs)
+			break;
+	}
+
+	pTree->setUpdatesEnabled(UpdatesEnabled);
+	if (ScrollToBottom)
+		m_pMessageLog->GetView()->verticalScrollBar()->setValue(m_pMessageLog->GetView()->verticalScrollBar()->maximum());
+
+	m_FlushingMessageLog = false;
+
+	if (!m_PendingMessageLog.isEmpty())
+		ScheduleMessageLogFlush();
+}
+
+void CSandMan::AddLogMessageNow(const QDateTime& TimeStamp, const QString& Message, const QString& Link, int Count)
+{
 	QRegularExpression tagExp("<[^>]*>");
 	QString TextMessage = Message;
 	TextMessage.remove(tagExp);
+
+#ifndef _DEBUG
+	const int PlainItemBacklogThreshold = 25;
+	const qint64 PlainItemModeMs = 2000;
+	const qint64 NowMs = QDateTime::currentMSecsSinceEpoch();
+	if (m_PendingMessageLog.count() + 1 >= PlainItemBacklogThreshold)
+		m_MessageLogPlainItemModeUntil = NowMs + PlainItemModeMs;
+
+	const bool UsePlainItem = NowMs < m_MessageLogPlainItemModeUntil;
+#endif
 
 	int last = m_pMessageLog->GetTree()->topLevelItemCount();
 	if (last > 0) {
 		QTreeWidgetItem* pItem = m_pMessageLog->GetTree()->topLevelItem(last-1);
 		if (pItem->data(1, Qt::UserRole).toString() == Message) {
-			int Count = pItem->data(0, Qt::UserRole).toInt();
-			if (Count == 0)
-				Count = 1;
-			Count++;
-			pItem->setData(0, Qt::UserRole, Count);
-#ifdef _DEBUG
-			pItem->setText(1, TextMessage + tr(" (%1)").arg(Count));
-#else
-			QLabel* pLabel = (QLabel*)m_pMessageLog->GetTree()->itemWidget(pItem, 1);
-			if(pLabel)
-				pLabel->setText(Message + tr(" (%1)").arg(Count));
-			else
-				pItem->setText(1, Message + tr(" (%1)").arg(Count));
+			int TotalCount = pItem->data(0, Qt::UserRole).toInt();
+			if (TotalCount == 0)
+				TotalCount = 1;
+			TotalCount += Count;
+			pItem->setData(0, Qt::UserRole, TotalCount);
+			pItem->setText(1, TextMessage + tr(" (%1)").arg(TotalCount));
+#ifndef _DEBUG
+			QLabel* pLabel = qobject_cast<QLabel*>(m_pMessageLog->GetTree()->itemWidget(pItem, 1));
+			if (pLabel)
+				pLabel->setText(Message + tr(" (%1)").arg(TotalCount));
 #endif
 			return;
 		}
 	}
 
+	QString DisplayTextMessage = Count > 1 ? TextMessage + tr(" (%1)").arg(Count) : TextMessage;
+#ifndef _DEBUG
+	QString DisplayMessage = Count > 1 ? Message + tr(" (%1)").arg(Count) : Message;
+#endif
+
 	QTreeWidgetItem* pItem = new QTreeWidgetItem(); // Time|Message
 	pItem->setText(0, TimeStamp.toString("dd.MM.yyyy hh:mm:ss.zzz"));
 	//pItem->setToolTip(0, TimeStamp.toString("dd.MM.yyyy hh:mm:ss.zzz"));
 	pItem->setData(1, Qt::UserRole, Message);
+	pItem->setData(1, Qt::UserRole + 1, Link);
+	if (!Link.isEmpty())
+		pItem->setToolTip(1, Link);
+	if (Count > 1)
+		pItem->setData(0, Qt::UserRole, Count);
 	m_pMessageLog->GetTree()->addTopLevelItem(pItem);
-#ifdef _DEBUG
-	pItem->setText(1, TextMessage);
-#else
-	if (!Link.isEmpty()) {
-		QLabel* pLabel = new QLabel(Message);
+
+#ifndef _DEBUG
+	if (!UsePlainItem && !Link.isEmpty()) {
+		QLabel* pLabel = new QLabel(DisplayMessage);
 		pLabel->setContentsMargins(3, 0, 0, 0);
 		pLabel->setAutoFillBackground(true);
 		pLabel->setToolTip(Link);
 		connect(pLabel, SIGNAL(linkActivated(const QString&)), theGUI, SLOT(OpenUrl(const QString&)));
 		m_pMessageLog->GetTree()->setItemWidget(pItem, 1, pLabel);
-
-		pItem->setText(1, TextMessage);
 	}
-	else
-		pItem->setText(1, Message);
 #endif
 
-	m_pMessageLog->GetView()->verticalScrollBar()->setValue(m_pMessageLog->GetView()->verticalScrollBar()->maximum());
+	pItem->setText(1, DisplayTextMessage);
+}
+
+void CSandMan::OnMessageLogDblClick(QTreeWidgetItem* pItem, int Column)
+{
+	if (!pItem || Column != 1)
+		return;
+
+	QString Link = pItem->data(1, Qt::UserRole + 1).toString();
+	if (!Link.isEmpty())
+		OpenUrl(Link);
 }
 
 QString CSandMan::FormatSbieMessage(quint32 MsgCode, const QStringList& MsgData, QString ProcessName, QString* pLink)
@@ -2952,8 +3451,9 @@ QString CSandMan::FormatSbieMessage(quint32 MsgCode, const QStringList& MsgData,
 	else if(MsgData.size() > 0)
 		Message = MsgData[0];
 
-	for (int i = 1; i < MsgData.size(); i++)
-		Message = Message.arg(MsgData[i]);
+	for (int i = 1; i < MsgData.size(); i++) {
+		Message = Message.arg(GetBoxDisplayName(MsgData[i]));
+	}
 
 	if (ProcessName != "System") // if it's not from the driver, add the pid
 		Message.prepend(ProcessName + ": ");
@@ -2992,14 +3492,15 @@ void CSandMan::OnLogSbieMessage(quint32 MsgCode, const QStringList& MsgData, qui
 	if ((MsgCode & 0xFFFF) == 6004 || (MsgCode & 0xFFFF) == 6008 || (MsgCode & 0xFFFF) == 6009) // certificate error
 	{
 		QString Message;
+		QString BoxDisplayName = GetBoxDisplayName(MsgData[1]);
 		if ((MsgCode & 0xFFFF) == 6008)
 		{
-			Message = tr("The box %1 is configured to use features exclusively available to project supporters.").arg(MsgData[1]);
+			Message = tr("The box %1 is configured to use features exclusively available to project supporters.").arg(BoxDisplayName);
 			Message.append(tr("<br /><a href=\"https://sandboxie-plus.com/go.php?to=sbie-get-cert\">Become a project supporter</a>, and receive a <a href=\"https://sandboxie-plus.com/go.php?to=sbie-cert\">supporter certificate</a>"));
 		}
 		else if ((MsgCode & 0xFFFF) == 6009)
 		{
-			Message = tr("The box %1 is configured to use features which require an <b>advanced</b> supporter certificate.").arg(MsgData[1]);
+			Message = tr("The box %1 is configured to use features which require an <b>advanced</b> supporter certificate.").arg(BoxDisplayName);
 			if(g_CertInfo.active)
 				Message.append(tr("<br /><a href=\"https://sandboxie-plus.com/go.php?to=sbie-upgrade-cert\">Upgrade your Certificate</a> to unlock advanced features."));
 			else
@@ -3012,9 +3513,9 @@ void CSandMan::OnLogSbieMessage(quint32 MsgCode, const QStringList& MsgData, qui
 				iLastCertWarning = QDateTime::currentDateTime().toSecsSinceEpoch();
 
 				if (!MsgData[2].isEmpty())
-					Message = tr("The program %1 started in box %2 will be terminated in 5 minutes because the box was configured to use features exclusively available to project supporters.").arg(MsgData[2]).arg(MsgData[1]);
+					Message = tr("The program %1 started in box %2 will be terminated in 5 minutes because the box was configured to use features exclusively available to project supporters.").arg(MsgData[2]).arg(BoxDisplayName);
 				else
-					Message = tr("The box %1 is configured to use features exclusively available to project supporters, these presets will be ignored.").arg(MsgData[1]);
+					Message = tr("The box %1 is configured to use features exclusively available to project supporters, these presets will be ignored.").arg(BoxDisplayName);
 				Message.append(tr("<br /><a href=\"https://sandboxie-plus.com/go.php?to=sbie-get-cert\">Become a project supporter</a>, and receive a <a href=\"https://sandboxie-plus.com/go.php?to=sbie-cert\">supporter certificate</a>"));
 
 				//bCertWarning = false;
@@ -3074,6 +3575,18 @@ void CSandMan::ShowMessageBox(QWidget* Widget, QMessageBox::Icon Icon, const QSt
 	msgBox.exec();
 }
 
+QString CSandMan::GetBoxDisplayName(const CSandBoxPtr& pBox, CSandBoxPlus::EDisplayNameContext Context)
+{
+	QSharedPointer<CSandBoxPlus> pBoxEx = pBox.objectCast<CSandBoxPlus>();
+	return pBoxEx ? pBoxEx->GetDisplayName(Context) : (pBox ? pBox->GetName() : QString());
+}
+
+QString CSandMan::GetBoxDisplayName(const QString& BoxName, CSandBoxPlus::EDisplayNameContext Context)
+{
+	CSandBoxPtr pBox = theAPI->GetBoxByName(BoxName);
+	return pBox ? GetBoxDisplayName(pBox, Context) : BoxName;
+}
+
 void CSandMan::SaveMessageLog(QIODevice* pFile)
 {
 	foreach(const SSbieMsg& Msg, m_MessageLog)
@@ -3086,7 +3599,6 @@ bool CSandMan::SetCertificate(const QByteArray& Certificate)
 	SB_STATUS Status = theAPI->SetDatFile("Certificate.dat", Certificate);
 	return Status;
 }
-
 
 bool CSandMan::CheckCertificate(QWidget* pWidget, int iType)
 {
@@ -3317,7 +3829,15 @@ void CSandMan::OnNotAuthorized(bool bLoginRequired, bool& bRetry)
 
 void CSandMan::OnBoxDblClick(QTreeWidgetItem* pItem)
 {
-	m_pBoxView->OnDoubleClicked(theAPI->GetBoxByName(pItem->data(0, Qt::UserRole).toString()));
+	if (!pItem || !m_pBoxView || !theAPI)
+		return;
+	QString Name = pItem->data(0, Qt::UserRole).toString();
+	if (Name.isEmpty())
+		return;
+	CSandBoxPtr pBox = theAPI->GetBoxByName(Name);
+	if (pBox.isNull())
+		return;
+	m_pBoxView->OnDoubleClicked(pBox);
 }
 
 void CSandMan::OnSandBoxAction()
@@ -3325,11 +3845,13 @@ void CSandMan::OnSandBoxAction()
 	QAction* pAction = qobject_cast<QAction*>(sender());
 
 	if (pAction == m_pNewBox)
-		GetBoxView()->AddNewBox();
+		GetBoxView()->AddNewBoxAction();
 	else if (pAction == m_pNewGroup)
-		GetBoxView()->AddNewGroup();
-	else if (pAction == m_pImportBox)
-		GetBoxView()->ImportSandbox();
+		GetBoxView()->AddNewGroupAction();
+	else if (pAction == m_pImportBoxes)
+		GetBoxView()->ImportBoxesAction();
+	else if (pAction == m_pExportBoxes)
+		ExportMultiBoxes(this);
 	else if (pAction == m_pRunBoxed)
 		RunSandboxed(QStringList() << "run_dialog");
 }
@@ -3650,6 +4172,10 @@ void CSandMan::OnCleanUp()
 {
 	if (sender() == m_pCleanUpMsgLog || sender() == m_pCleanUpButton) {
 		m_MessageLog.clear();
+		m_PendingMessageLog.clear();
+		m_MessageLogPlainItemModeUntil = 0;
+		m_MessageLogFlushPending = false;
+		m_FlushingMessageLog = false;
 		if (m_pMessageLog) m_pMessageLog->GetTree()->clear();
 	}
 
@@ -3686,6 +4212,14 @@ void CSandMan::OnProcView()
 			});
 		}
 	}
+}
+
+void CSandMan::OnAutoExpand()
+{
+	theConf->SetValue("Options/AutoExpandTree", m_pAutoExpand->isChecked());
+
+	m_pBoxView->SetAutoExpand(m_pAutoExpand->isChecked(),
+		theConf->GetBool("Options/LegacyAutoExpandTree", false));
 }
 
 void CSandMan::OnSettings()
@@ -4132,8 +4666,14 @@ QString CSandMan::FormatError(const SB_STATUS& Error)
 	default:				return tr("Unknown Error Status: 0x%1").arg((quint32)Error.GetStatus(), 8, 16, QChar('0'));
 	}
 
-	foreach(const QVariant& Arg, Error.GetArgs())
-		Message = Message.arg(Arg.toString()); // todo: make quint32 hex and so on
+	int ArgIndex = 0;
+	foreach(const QVariant& Arg, Error.GetArgs()) {
+		QString Value = Arg.toString();
+		if (Error.GetMsgCode() == SB_DeleteFailed && ArgIndex == 0)
+			Value = GetBoxDisplayName(Value);
+		Message = Message.arg(Value); // todo: make quint32 hex and so on
+		ArgIndex++;
+	}
 
 	return Message;
 }

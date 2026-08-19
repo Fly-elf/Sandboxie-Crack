@@ -10,13 +10,13 @@
 
 |      系统要求      |      发布说明      |     贡献指南      |      安全政策      |      行为准则       |
 |        :---:       |          :---:     |          :---:    |          :---:      |          :---:       |
-| Windows 7 或更高版本，32位或 64位。 | [CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md) | [CONTRIBUTING.md](./CONTRIBUTING.md) | [SECURITY.md](./SECURITY.md) | [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) |
+| Windows 7 或更高版本 (64位) | [CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md) | [CONTRIBUTING_zh_CN.md](./CONTRIBUTING_zh_CN.md) | [SECURITY.md](./SECURITY.md) | [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) |
 
-Sandboxie 是一种基于沙盒的隔离软件，适用于 32 位和 64 位 Windows NT 操作系统。它创建了一个类似沙盒的隔离操作环境，在该环境中，可以运行或安装应用程序，而不对本地和映射驱动器及 Windows 注册表进行永久性修改。隔离的虚拟环境可以控制不受信任程序的测试和网络浏览。<br>
+Sandboxie 是一种基于沙盒的隔离软件，适用于 Windows NT 操作系统。它创建了一个类似沙盒的隔离操作环境，在该环境中，可以运行或安装应用程序，而不对本地和映射驱动器及 Windows 注册表进行永久性修改。隔离的虚拟环境可以控制不受信任程序的测试和网络浏览。<br>
 
 Sandboxie 允许您创建几乎无限的沙盒，并单独或同时运行它们，以隔离程序与主机及彼此的访问，同时还允许您在单个沙盒中同时运行尽可能多的程序。
 
-**注意：这是一个社区分支，发生在 Sandboxie 源代码发布后，并不是之前开发的官方延续（请参见 [项目历史](./README.md#-project-history) 和 [#2926](https://github.com/sandboxie-plus/Sandboxie/issues/2926)）。**
+**注意：这是一个社区分支，发生在 Sandboxie 源代码发布后，并不是之前开发的官方延续（请参见 [项目历史](#project-history) 和 [#2926](https://github.com/sandboxie-plus/Sandboxie/issues/2926)）。**
 
 ## ⏬ 下载
 
@@ -59,6 +59,13 @@ Sandboxie Plus 拥有基于现代 Qt 的用户界面，支持自项目开源以�
   * 完全不同于 Sandboxie 开源前版本的令牌创建机制，使沙盒在系统中更具独立性
   * 加密沙盒 - 基于 AES 的可靠数据存储解决方案
   * 防止沙盒程序以常规方式生成不必要的唯一标识符
+  * 内置 INI 编辑器，可通过可视提示和工具提示帮助用户理解已配置或想要添加的设置
+  * 支持配置外部文本编辑器，而不仅限于系统默认编辑器
+  * 支持控制边框的 Alpha 透明度
+  * 自定义 UAC 对话框，可模拟权限、授予权限或取消提权尝试
+  * 现代化图标，并可在部分位置使用旧式图标
+  * 可以更改用户界面字体
+  * 沙盒或分组可以使用自定义颜色或图标
 
 更多功能可以通过在 [CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md) 文件中使用快捷键 Ctrl+F 查找符号 `=` 来发现。
 
@@ -79,8 +86,9 @@ Sandboxie 的功能可以通过以下专业工具进行增强：
   * [SbieHide](https://github.com/VeroFess/SbieHide) - 尝试隐藏 SbieDll.dll 在被沙盒化应用中的存在
   * [SandboxToys2](https://github.com/blap/SandboxToys2) - 允许监控沙盒内的文件和注册表更改
   * [Sbiextra](https://github.com/sandboxie-plus/sbiextra) - 对沙盒进程添加额外的用户模式限制
+  * [WrapLocale](https://github.com/UserUnknownFactor/WrapLocale) - 提供比原生 LangId 功能更灵活的区域设置伪装选项
 
-
+<a id="project-history"></a>
 ## 📌 项目历史
 
 |      时间线       |    维护者    |
@@ -89,25 +97,27 @@ Sandboxie 的功能可以通过以下专业工具进行增强：
 | 2013 - 2017       | Invincea Inc. |
 | 2017 - 2020       | Sophos Group plc |
 | 2020年4月8日 - [开源代码](https://community.sophos.com/sandboxie/f/forum/119641/important-sandboxie-open-source-code-is-available-for-download) | Sophos Ltd. |
-| 2020年4月9日 - 项目分支 | David Xanatos |
+| 2020年4月9日起 - 项目分支 | David Xanatos |
+
+想查找旧版 Sandboxie？请查看[版本历史](https://github.com/sandboxie-plus/sandboxie-old)。
 
 请查看当前 [路线图](https://www.wilderssecurity.com/threads/updated-sandboxie-plus-roadmap.456886/)。
 
 ## 📌 项目支持/赞助
 
-[<img align="left" height="64" width="64" src="https://github.com/sandboxie-plus/Sandboxie/raw/master/.github/images/binja-love.png">](https://binary.ninja/)
+[<img align="left" height="64" width="64" src="./.github/images/binja-love.png">](https://binary.ninja/)
 感谢 [Vector 35](https://vector35.com/) 提供的 [Binary Ninja](https://binary.ninja/) 许可证，帮助进行逆向工程。
 <br>
 Binary Ninja 是一个多平台交互式反汇编、反编译和二进制分析工具，专为逆向工程师、恶意软件分析师、漏洞研究人员和软件开发人员设计。<br>
 <br>
-[<img align="left" height="64" width="64" src="https://github.com/sandboxie-plus/Sandboxie/raw/master/.github/images/Icons8_logo.png">](https://icons8.de/)感谢 [Icons8](https://icons8.de/) 为项目提供图标。
+[<img align="left" height="64" width="64" src="./.github/images/Icons8_logo.png">](https://icons8.de/)感谢 [Icons8](https://icons8.de/) 为项目提供图标。
 <br>
 <br>
 <br>
 
 ## 🤝 支持该项目
 
-如果您发现 Sandboxie 有用，请随时通过我们的 [贡献指南](./CONTRIBUTING.md) 进行贡献。
+如果您发现 Sandboxie 有用，请随时通过我们的 [贡献指南](./CONTRIBUTING_zh_CN.md) 进行贡献。
 
 ## 📑 感谢贡献者
 
@@ -127,6 +137,7 @@ Binary Ninja 是一个多平台交互式反汇编、反编译和二进制分析�
 - typpos - 界面新增功能 / 文档 / 代码修复
 - Yeyixiao - 功能新增
 - Deezzir - 功能新增
+- wzxjohn - 代码修复 / 文档补充
 - okrc - 代码修复
 - Sapour - 代码修复
 - lmou523 - 代码修复
@@ -150,26 +161,35 @@ Binary Ninja 是一个多平台交互式反汇编、反编译和二进制分析�
 - wilders-soccerfan - 文档补充
 - LepordCat - 文档补充
 - stdedos - 文档补充
+- habatake - 界面新增功能 / 代码修复
+- Polyester6719 - 文档补充
 
 ## 🌏 翻译人员
 
 - czoins - 阿拉伯语
-- yuhao2348732、0x391F、nkh0472、yfdyh000、gexgd0419、Zerorigin、UnnamedOrange、DevSplash、Becods、okrc、4rt3mi5、sepcnt、风之暇想 - 简体中文
-- TragicLifeHu、Hulen、xiongsp - 繁体中文
+- yuhao2348732、0x391F、nkh0472、yfdyh000、gexgd0419、Zerorigin、UnnamedOrange、DevSplash、Becods、okrc、4rt3mi5、sepcnt、fzxx、Vstory、GT-Stardust、habatake - 简体中文
+- TragicLifeHu、Hulen、xiongsp、habatake - 繁体中文
 - RockyTDR - 荷兰语
 - clexanis、Mmoi-Fr、hippalectryon-0、Monsieur Pissou - 法语（通过电子邮件提供）
 - bastik-1001、APMichael - 德语
 - timinoun - 匈牙利语（通过电子邮件提供）
 - isaak654、DerivativeOfLog7 - 意大利语
-- takahiro-itou - 日语
+- takahiro-itou、lllIIIlll - 日语
 - VenusGirl - 韩语
+- divinity76 - 书面挪威语
 - 7zip、AndrzejRafalowski - 波兰语（[单独提供](https://forum.xanasoft.com/threads/polish-translation.4/page-2)）
 - JNylson - 葡萄牙语及巴西葡萄牙语
 - lufog、marat2509 - 俄语
 - LumitoLuma、sebadamus - 西班牙语
 - 1FF、Thatagata - 瑞典语（通过电子邮件或拉取请求提供）
 - xorcan、fmbxnary、offhub - 土耳其语
-- SuperMaxusa、lufog - 乌克兰语
+- SuperMaxusa、lufog、Nazar1ky - 乌克兰语
 - GunGunGun - 越南语
 
-所有译者在提交翻译前，建议先查看[本地化说明和提示](https://git.io/J9G19)
+所有译者在提交翻译前，建议先查看[本地化说明和提示](https://github.com/sandboxie-plus/Sandboxie/discussions/1123)。
+
+## 📚 文档翻译人员
+
+- Vstory、GT-Stardust、wzxjohn、SOLEADO20、habatake - 简体中文
+
+所有文档译者在提交翻译前，建议先查看[多语言翻译贡献指南](https://github.com/sandboxie-plus/sandboxie-docs/issues/175#issuecomment-2840258519)。

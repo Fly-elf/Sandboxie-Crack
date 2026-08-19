@@ -44,6 +44,8 @@ static int Gui_GetWindowTextA(
 
 BOOLEAN Gui_DisableTitle = FALSE;
 
+static BOOLEAN Gui_DisableCustomTitleOpt = FALSE;
+
 const WCHAR *Gui_TitleSuffixW = TITLE_SUFFIX_W;
 static ULONG Gui_TitleSuffixW_len = 0;
 
@@ -53,6 +55,7 @@ static ULONG Gui_TitleSuffixA_len = 0;
 ULONG Gui_BoxNameTitleLen = 0;
 WCHAR *Gui_BoxNameTitleW = NULL;
 static ANSI_STRING Gui_BoxNameTitleA;
+static ULONG Gui_BoxNameTitleALen = 0;
 
 
 //---------------------------------------------------------------------------
@@ -72,12 +75,24 @@ _FX BOOLEAN Gui_InitTitle(HMODULE module)
     if (*buf == L'y' || *buf == L'Y') { // indicator + box name
 
         const WCHAR* BoxName = Dll_BoxName;
+        WCHAR BoxDisplayName[MAX_PATH + BOXNAME_COUNT + 4];
+        ULONG AliasDisplayMode = SbieApi_QueryConfNumber(
+            L"GlobalSettings", L"BoxAliasDisplayMode", 0);
+        if (AliasDisplayMode > 2)
+            AliasDisplayMode = 0;
 
         NTSTATUS status;
 		WCHAR BoxAlias[MAX_PATH];
-		status = SbieApi_QueryConfAsIs(NULL, L"BoxAlias", 0, BoxAlias, ARRAYSIZE(BoxAlias));
-        if (NT_SUCCESS(status) && *BoxAlias)
-            BoxName = BoxAlias;
+		status = SbieApi_QueryConfAsIs(NULL, L"BoxAlias", 0, BoxAlias, sizeof(BoxAlias));
+        if (AliasDisplayMode != 1 && NT_SUCCESS(status) && *BoxAlias) {
+            if (AliasDisplayMode == 2 && _wcsicmp(BoxAlias, Dll_BoxName) != 0) {
+                Sbie_snwprintf(BoxDisplayName, ARRAYSIZE(BoxDisplayName),
+                    L"%s (%s)", BoxAlias, Dll_BoxName);
+                BoxName = BoxDisplayName;
+            }
+            else
+                BoxName = BoxAlias;
+        }
 
         UNICODE_STRING uni;
 
@@ -91,6 +106,7 @@ _FX BOOLEAN Gui_InitTitle(HMODULE module)
 
         RtlInitUnicodeString(&uni, Gui_BoxNameTitleW);
         RtlUnicodeStringToAnsiString(&Gui_BoxNameTitleA, &uni, TRUE);
+        Gui_BoxNameTitleALen = Gui_BoxNameTitleA.Length;
 
     } else if (*buf == L'-') // don't alter boxed window titles at all
         Gui_DisableTitle = TRUE;
@@ -98,6 +114,15 @@ _FX BOOLEAN Gui_InitTitle(HMODULE module)
 
     Gui_TitleSuffixW_len = wcslen(Gui_TitleSuffixW);
     Gui_TitleSuffixA_len = strlen(Gui_TitleSuffixA);
+
+    //
+    // check if user wants to disable the custom titlebar optimization
+    // (i.e. allow [#] markers on VCL/Qt/Electron custom titlebar windows)
+    //
+
+    SbieDll_GetSettingsForName(NULL, Dll_ImageName, L"DisableCustomTitleOpt", buf, sizeof(buf), NULL);
+    if (*buf == L'y' || *buf == L'Y')
+        Gui_DisableCustomTitleOpt = TRUE;
 
     //
     // hook functions
@@ -155,6 +180,33 @@ _FX BOOLEAN Gui_ShouldCreateTitle(HWND hWnd)
         ULONG style = (ULONG)__sys_GetWindowLongW(hWnd, GWL_STYLE);
         if ((style & WS_CAPTION) == WS_CAPTION) {
 
+            //
+            // Check for custom titlebar - if the client area extends close to
+            // the top of the window, the application is rendering its own
+            // titlebar (e.g., VCL TCustomTitleBarPanel, Qt, Electron, etc.)
+            // and modifying the title causes excessive repainting.
+            // Set DisableCustomTitleOpt=y to allow [#] markers on
+            // custom titlebar windows.
+            //
+
+            if (! Gui_DisableCustomTitleOpt) {
+
+                RECT windowRect;
+                POINT clientOrigin = {0, 0};
+                if (__sys_GetWindowRect(hWnd, &windowRect) &&
+                    __sys_ClientToScreen(hWnd, &clientOrigin)) {
+
+                    int titleBarHeight = clientOrigin.y - windowRect.top;
+
+                    // Standard titlebar is typically 20-40 pixels. If the gap
+                    // is less than 10 pixels, it's a custom titlebar - skip
+                    // modification.
+                    if (titleBarHeight < 10)
+                        return FALSE;
+                }
+            }
+
+            // $Workaround$ - 3rd party fix
             WCHAR clsnm[256];
             UINT nChars = __sys_RealGetWindowClassW(hWnd, clsnm, sizeof(clsnm) - 1);
 
@@ -214,7 +266,7 @@ _FX WCHAR *Gui_CreateTitleW(const WCHAR *oldTitle)
 
     len_new = (len_old + Gui_TitleSuffixW_len * 2 + 1) * sizeof(WCHAR);
     if (Gui_BoxNameTitleLen)
-        len_new += 40 * sizeof(WCHAR);
+        len_new += Gui_BoxNameTitleLen * sizeof(WCHAR);
     newTitle = Dll_Alloc(len_new);
 
     wmemcpy(newTitle, Gui_TitleSuffixW + 1, Gui_TitleSuffixW_len - 1);
@@ -266,8 +318,8 @@ _FX UCHAR *Gui_CreateTitleA(const UCHAR *oldTitle)
     }
 
     len_new = (len_old + Gui_TitleSuffixA_len * 2 + 1) * sizeof(UCHAR);
-    if (Gui_BoxNameTitleLen)
-        len_new += 40 * sizeof(UCHAR);
+    if (Gui_BoxNameTitleALen)
+        len_new += Gui_BoxNameTitleALen * sizeof(UCHAR);
     newTitle = Dll_Alloc(len_new);
 
     memcpy(newTitle, Gui_TitleSuffixA + 1, Gui_TitleSuffixA_len - 1);
@@ -275,9 +327,9 @@ _FX UCHAR *Gui_CreateTitleA(const UCHAR *oldTitle)
     *ptr = ' ';
     ++ptr;
 
-    if (Gui_BoxNameTitleLen) {
-        memcpy(ptr, Gui_BoxNameTitleA.Buffer, Gui_BoxNameTitleLen);
-        ptr += Gui_BoxNameTitleLen;
+    if (Gui_BoxNameTitleALen) {
+        memcpy(ptr, Gui_BoxNameTitleA.Buffer, Gui_BoxNameTitleALen);
+        ptr += Gui_BoxNameTitleALen;
     }
 
     memcpy(ptr, oldTitle, len_old);
@@ -344,8 +396,8 @@ _FX int Gui_FixTitleA(HWND hWnd, UCHAR *lpWindowTitle, int len)
             len -= 4;
             lpWindowTitle[len] = '\0';
         }
-        if (Gui_BoxNameTitleLen) {
-            const int lenTitle    = Gui_BoxNameTitleLen;
+        if (Gui_BoxNameTitleALen) {
+            const int lenTitle    = Gui_BoxNameTitleALen;
             const UCHAR *ptrTitle = Gui_BoxNameTitleA.Buffer;
             if (len >= lenTitle
                     && memcmp(lpWindowTitle, ptrTitle, lenTitle) == 0) {

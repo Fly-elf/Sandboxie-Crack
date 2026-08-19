@@ -160,6 +160,11 @@ P_NtCreateTokenEx               ZwCreateTokenEx             = NULL;
 #endif
 
 
+P_MmCopyMemory MyMmCopyMemory = NULL;
+
+P_PsIsWin32KFilterEnabledForProcess IsWin32KFilterEnabledForProcess = NULL;
+
+
 //---------------------------------------------------------------------------
 // DriverEntry
 //---------------------------------------------------------------------------
@@ -725,6 +730,8 @@ void* Driver_FindMissingService(const char* ProcName, int prmcnt)
 
 _FX BOOLEAN Driver_FindMissingServices(void)
 {
+    UNICODE_STRING uni;
+
     //
     // Retrieve some unexported kernel functions which may be useful
     //
@@ -752,7 +759,6 @@ _FX BOOLEAN Driver_FindMissingServices(void)
     
     /*DbgPrint("Test 1\n");
 
-    UNICODE_STRING uni;
     OBJECT_ATTRIBUTES objattrs;
     RtlInitUnicodeString(&uni, L"\\??\\C:\\Temp\\test.txt");
     InitializeObjectAttributes(&objattrs,
@@ -783,7 +789,7 @@ _FX BOOLEAN Driver_FindMissingServices(void)
 #endif
 
 #ifdef OLD_DDK
-    UNICODE_STRING uni;
+
 	RtlInitUnicodeString(&uni, L"ZwSetInformationToken");
 
     //
@@ -807,6 +813,12 @@ _FX BOOLEAN Driver_FindMissingServices(void)
 	}
 #endif
 
+    RtlInitUnicodeString(&uni, L"MmCopyMemory"); // not present in windows 7
+    MyMmCopyMemory = (P_MmCopyMemory) MmGetSystemRoutineAddress(&uni);
+
+    RtlInitUnicodeString(&uni, L"PsIsWin32KFilterEnabledForProcess");
+    IsWin32KFilterEnabledForProcess = (P_PsIsWin32KFilterEnabledForProcess) MmGetSystemRoutineAddress(&uni);
+
     return TRUE;
 }
 
@@ -820,6 +832,14 @@ _FX void SbieDrv_DriverUnload(DRIVER_OBJECT *DriverObject)
 {
     Driver_Unloading = TRUE;
 
+    // Make sure notify callbacks bail out immediately during unload.
+    Process_ReadyToSandbox = FALSE;
+    KeMemoryBarrier();
+
+    // Unregister process/image notify callbacks before tearing down
+    // subsystems that may be touched from process create/delete paths.
+    Process_Unload(FALSE);
+
     //
     // unload just the hooks, in case this is a partial unload
     //
@@ -831,7 +851,6 @@ _FX void SbieDrv_DriverUnload(DRIVER_OBJECT *DriverObject)
     File_Unload();
     Obj_Unload();
     Thread_Unload();
-    Process_Unload(FALSE);
 
     //
     // if this is a full unload, then we can now unload everything else

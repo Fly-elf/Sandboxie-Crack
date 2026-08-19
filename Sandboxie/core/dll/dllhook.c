@@ -112,8 +112,6 @@ _FX void SbieDll_HookInit()
     InitializeCriticalSection(&Dll_ModuleHooks_CritSec);
     List_Init(&Dll_ModuleHooks);
 
-    Dll_HookTrace = SbieApi_QueryConfBool(NULL, L"HookTrace", FALSE);
-
 #ifdef _M_ARM64EC
     __sys_NtAllocateVirtualMemoryEx = (P_NtAllocateVirtualMemoryEx)GetProcAddress(Dll_Ntdll, "NtAllocateVirtualMemoryEx");
 #endif
@@ -1180,6 +1178,10 @@ _FX void *SbieDll_HookFunc(
         if (ChromeFunc != (void*)-1)
             SourceFunc = ChromeFunc;
         else {
+            //if ((Dll_ImageType == DLL_IMAGE_MOZILLA_FIREFOX || Dll_ImageType == DLL_IMAGE_MOZILLA_THUNDERBIRD) && strcmp(SourceFuncName, "NtMapViewOfSection") == 0) {
+            //    // skip hooking if we are a already pre hooked worker process
+            //    return (void*)-1;
+            //}
             //SbieApi_Log(2328, _fmt1, SourceFuncName, 1);
             if (pHookStats) *pHookStats |= HOOK_STAT_CHROME_FAIL;
         }
@@ -1234,7 +1236,6 @@ _FX void *SbieDll_HookFunc(
         }
         else
         {
-            
             if(strcmp(SourceFuncName, "ShellExecuteExW") != 0) // for these functions its fine
                 SbieApi_Log(2329, _fmt1, SourceFuncName, 1);
             if (pHookStats) *pHookStats |= HOOK_STAT_NO_FFS;
@@ -1365,6 +1366,12 @@ _FX void *SbieDll_Hook(
     //
 
     func = SbieDll_HookFunc(SourceFuncName, SourceFunc, DetourFunc, module, &HookStats);
+
+    //if (func == (void*)-1) {
+    //    HookStats = HOOK_STAT_SKIPPED;
+    //    func = SourceFunc;
+    //    goto finish;
+    //}
 
     //
     // when tracing API calls of functions that are not normally hooked,

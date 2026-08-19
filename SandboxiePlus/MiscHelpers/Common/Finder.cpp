@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "Finder.h"
+#include <QSignalBlocker>
 
 bool CFinder::m_DarkMode = false;
 
@@ -46,6 +47,16 @@ CFinder::CFinder(QObject* pFilterTarget, QWidget *parent, int iOptions)
 	m_pSearch = new QLineEdit();
 	m_pSearch->setPlaceholderText(m_Placeholder);
 	m_pSearch->setMinimumWidth(200);
+	QAction* pClearSearch = m_pSearch->addAction(
+		QIcon(":/Actions/Erase.png"), QLineEdit::TrailingPosition);
+	pClearSearch->setToolTip(tr("Clear search"));
+	pClearSearch->setVisible(false);
+	connect(pClearSearch, &QAction::triggered,
+		m_pSearch, &QLineEdit::clear);
+	connect(m_pSearch, &QLineEdit::textChanged,
+		pClearSearch, [pClearSearch](const QString& Text) {
+			pClearSearch->setVisible(!Text.isEmpty());
+		});
 	//m_pSearch->setMaximumWidth(400);
 	m_pSearchLayout->addWidget(m_pSearch);
 	QObject::connect(m_pSearch, SIGNAL(textChanged(QString)), this, SLOT(OnText()));
@@ -110,9 +121,29 @@ CFinder::CFinder(QObject* pFilterTarget, QWidget *parent, int iOptions)
 	else
 		m_pHighLight = NULL;
 
-	QWidget* pSpacer = new QWidget();
-	pSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	m_pSearchLayout->addWidget(pSpacer);
+	// Expand/Collapse controls for tree navigation
+	m_pExpandAll = new QToolButton();
+	m_pExpandAll->setText("+");
+	m_pExpandAll->setToolTip(tr("Expand all"));
+	m_pSearchLayout->addWidget(m_pExpandAll);
+	connect(m_pExpandAll, SIGNAL(clicked()), this, SLOT(OnExpandAll()));
+
+	m_pCollapseAll = new QToolButton();
+	m_pCollapseAll->setText("-");
+	m_pCollapseAll->setToolTip(tr("Collapse all"));
+	m_pSearchLayout->addWidget(m_pCollapseAll);
+	connect(m_pCollapseAll, SIGNAL(clicked()), this, SLOT(OnCollapseAll()));
+
+	m_pCloseSpacer = new QWidget();
+	m_pCloseSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	m_pSearchLayout->addWidget(m_pCloseSpacer);
+
+	m_pProgressBar = new QProgressBar(this);
+	m_pProgressBar->setMaximumWidth(150);
+	m_pProgressBar->setMaximumHeight(16);
+	m_pProgressBar->setTextVisible(true);
+	m_pProgressBar->setVisible(false);
+	m_pSearchLayout->addWidget(m_pProgressBar);
 
 	QToolButton* pClose = new QToolButton(this);
     pClose->setIcon(QIcon(":/close.png"));
@@ -166,6 +197,11 @@ QAbstractButton* CFinder::GetToggleButton()
 		connect(m_pBtnSearch, SIGNAL(clicked(bool)), this, SLOT(OnToggle(bool)));
 	}
 	return m_pBtnSearch;
+}
+
+void CFinder::SetCloseButtonAtEnd(bool AtEnd)
+{
+	m_pCloseSpacer->setVisible(AtEnd);
 }
 
 void CFinder::SetTree(QTreeView* pTree) 
@@ -343,7 +379,7 @@ next_parent:
 	return QModelIndex();
 }
 
-void CFinder::OnSelectNext() 
+void CFinder::OnSelectNext()
 {
 	if (!m_pModel)
 		return;
@@ -354,4 +390,37 @@ void CFinder::OnSelectNext()
 		m_pTree->setCurrentIndex(idx);
 	else
 		QApplication::beep();
+}
+
+void CFinder::OnExpandAll()
+{
+	if (m_pTree) {
+		QSignalBlocker Blocker(m_pTree);
+		m_pTree->expandAll();
+	}
+}
+
+void CFinder::OnCollapseAll()
+{
+	if (m_pTree) {
+		QSignalBlocker Blocker(m_pTree);
+		m_pTree->collapseAll();
+	}
+}
+
+void CFinder::SetProgress(int value, int maximum)
+{
+	m_pProgressBar->setMaximum(maximum);
+	m_pProgressBar->setValue(value);
+}
+
+void CFinder::ShowProgress()
+{
+	m_pProgressBar->setValue(0);
+	m_pProgressBar->setVisible(true);
+}
+
+void CFinder::HideProgress()
+{
+	m_pProgressBar->setVisible(false);
 }

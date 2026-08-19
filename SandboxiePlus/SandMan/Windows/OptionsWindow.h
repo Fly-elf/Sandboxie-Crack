@@ -3,6 +3,7 @@
 #include <QtWidgets/QMainWindow>
 #include "ui_OptionsWindow.h"
 #include "SbiePlusAPI.h"
+#include "PendingChanges.h"
 #include "../../MiscHelpers/Common/SettingsWidgets.h"
 
 //////////////////////////////////////////////////////////////////////////
@@ -32,9 +33,12 @@ public:
 		eTemplate,
 		eParent
 	};
+	enum { PendingItemTemplateRole = Qt::UserRole + 103 };
 
 	void LoadCompletionConsent();
 	void SaveCompletionConsent();
+	QString localizedCompletionShortcut();
+	int ShowConsentDialog(); // Returns: 0=Unchecked, 1=PartiallyChecked(Basic), 2=Checked(Full)
 
 signals:
 	//void OptionsChanged();
@@ -56,6 +60,7 @@ private slots:
 	bool OnPickIcon();
 	void OnPickColor();
 	void OnColorSlider(int value);
+	void OnColorReset();
 
 	void OnBoxTypChanged();
 	void UpdateBoxType();
@@ -238,7 +243,7 @@ private slots:
 	void OnDelUser();
 	//
 
-	void OnFilterTemplates()		{ ShowTemplates(); }
+	void OnFilterTemplates()		{ FilterTemplates(); }
 	void OnTemplateClicked(QTreeWidgetItem* pItem, int Column);
 	void OnTemplateDoubleClicked(QTreeWidgetItem* pItem, int Column);
 	void OnAddTemplates();
@@ -274,6 +279,7 @@ private slots:
 	void OnIniValidationToggled(int state);
 	void OnTooltipToggled(int state);
 	void OnAutoCompletionToggled(int state);
+	void OnEditorSettings();
 	void OnSaveIni();
 	void OnIniChanged();
 	void OnCancelEdit();
@@ -293,6 +299,7 @@ public:
 		eCopyAlways,
 		eDontCopy,
 		eCopyEmpty,
+		eCopyNewer,
 	};
 
 	enum ENetWfAction
@@ -555,6 +562,7 @@ protected:
 
 	void LoadTemplates();
 	void ShowTemplates();
+	void FilterTemplates();
 	void SaveTemplates();
 	void SetTemplate(const QString& Template, bool bEnabled);
 
@@ -573,10 +581,16 @@ protected:
 	QString GetCategoryName(const QString& Category);
 
 	bool m_HoldChange;
+	bool m_SkipSaveOnToggle; // Skip saving to config when applying reset settings
 
 	bool m_ConfigDirty;
+	bool m_StartRadioBaselineLoaded;
+	CPendingChanges m_PendingChanges{this, &m_HoldChange, PendingItemTemplateRole, false};
 	QColor m_BorderColor;
+	int m_BorderAlpha;
 	QString m_BoxIcon;
+	bool m_CustomColor;
+	bool m_SliderCustomColor;
 
 	bool m_HoldBoxType;
 
@@ -648,6 +662,7 @@ private:
 	QCheckBox* m_pUseIcon;
 	QToolButton* m_pPickIcon;
 	QSlider* m_pColorSlider;
+	QToolButton* m_pColorReset;
 
 	struct SDbgOpt {
 		QString Name;

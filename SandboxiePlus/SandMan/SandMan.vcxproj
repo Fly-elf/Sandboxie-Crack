@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|ARM64">
@@ -305,12 +305,15 @@
     <ClCompile Include="Helpers\WinAdmin.cpp" />
     <ClCompile Include="Helpers\WindowFromPointEx.cpp" />
     <ClCompile Include="Helpers\WinHelper.cpp" />
+    <ClCompile Include="Helpers\MiniDumpFilter.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Models\MonitorModel.cpp" />
+    <ClCompile Include="Models\NtObjectModel.cpp" />
     <ClCompile Include="Models\TraceModel.cpp" />
     <ClCompile Include="Models\SbieModel.cpp" />
     <ClCompile Include="OnlineUpdater.cpp" />
     <ClCompile Include="AddonManager.cpp" />
+    <ClCompile Include="BoxTransfer.cpp" />
     <ClCompile Include="SandMan.cpp" />
     <ClCompile Include="SandManRecovery.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
@@ -347,6 +350,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Views\FileView.cpp" />
+    <ClCompile Include="Views\NtObjectView.cpp" />
     <ClCompile Include="Views\SbieView.cpp">
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">%(Filename).moc</QtMocFileName>
@@ -362,6 +366,7 @@
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
     </ClCompile>
     <ClCompile Include="Views\StackView.cpp" />
+
     <ClCompile Include="Views\TraceView.cpp">
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">%(Filename).moc</QtMocFileName>
@@ -378,6 +383,7 @@
     </ClCompile>
     <ClCompile Include="Windows\CompressDialog.cpp" />
     <ClCompile Include="Windows\ExtractDialog.cpp" />
+    <ClCompile Include="Windows\RenameSandboxDialog.cpp" />
     <ClCompile Include="Windows\OptionsAccess.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
@@ -472,6 +478,20 @@
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
     </ClCompile>
+    <ClCompile Include="Windows\EditorSettingsWindow.cpp">
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
+    </ClCompile>
     <ClCompile Include="Windows\BoxImageWindow.cpp" />
     <ClCompile Include="Windows\PopUpWindow.cpp" />
     <ClCompile Include="Windows\RecoveryWindow.cpp" />
@@ -486,9 +506,11 @@
     <ClCompile Include="Windows\TestProxyDialog.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <QtMoc Include="Views\NtObjectView.h" />
     <QtMoc Include="Windows\ExtractDialog.h" />
     <QtMoc Include="Windows\TestProxyDialog.h" />
     <QtMoc Include="Windows\CompressDialog.h" />
+    <QtMoc Include="Windows\RenameSandboxDialog.h" />
     <QtMoc Include="Wizards\BoxAssistant.h" />
     <QtMoc Include="Windows\BoxImageWindow.h" />
     <QtMoc Include="Views\StackView.h" />
@@ -500,11 +522,13 @@
     <QtMoc Include="Wizards\SetupWizard.h" />
     <QtMoc Include="Windows\SelectBoxWindow.h" />
     <QtMoc Include="Views\TraceView.h" />
+
     <QtMoc Include="Windows\RecoveryWindow.h" />
     <QtMoc Include="Windows\PopUpWindow.h" />
     <QtMoc Include="Windows\SnapshotsWindow.h" />
     <QtMoc Include="Windows\SettingsWindow.h" />
     <QtMoc Include="Windows\OptionsWindow.h" />
+    <QtMoc Include="Windows\EditorSettingsWindow.h" />
     <QtMoc Include="Views\SbieView.h" />
     <QtMoc Include="SandMan.h" />
     <QtMoc Include="Models\SbieModel.h" />
@@ -528,12 +552,16 @@
     <ClInclude Include="Helpers\ReadDirectoryChanges.h" />
     <ClInclude Include="Helpers\ReadDirectoryChangesPrivate.h" />
     <ClInclude Include="Helpers\StorageInfo.h" />
+    <ClInclude Include="Windows\PendingChanges.h" />
     <ClInclude Include="Helpers\TabOrder.h" />
     <ClInclude Include="Helpers\ThreadSafeQueue.h" />
     <ClInclude Include="Helpers\WinAdmin.h" />
     <QtMoc Include="Models\MonitorModel.h" />
+    <QtMoc Include="Models\NtObjectModel.h" />
     <ClInclude Include="Helpers\WinHelper.h" />
+    <ClInclude Include="Helpers\MiniDumpFilter.h" />
     <QtMoc Include="AddonManager.h" />
+    <QtMoc Include="BoxTransfer.h" />
     <ClInclude Include="resource.h" />
     <QtMoc Include="SbiePlusAPI.h" />
     <QtMoc Include="SbieProcess.h" />
@@ -548,9 +576,11 @@
     <Image Include="Resources\SandMan.ico" />
   </ItemGroup>
   <ItemGroup>
+    <QtUic Include="Forms\EditorSettingsWindow.ui" />
     <QtUic Include="Forms\BoxImageWindow.ui" />
     <QtUic Include="Forms\CompressDialog.ui" />
     <QtUic Include="Forms\ExtractDialog.ui" />
+    <QtUic Include="Forms\RenameSandboxDialog.ui" />
     <QtUic Include="Forms\OptionsWindow.ui" />
     <QtUic Include="Forms\PopUpWindow.ui" />
     <QtUic Include="Forms\RecoveryWindow.ui" />
@@ -566,6 +596,7 @@
     <None Include="sandman_en.ts" />
     <None Include="sandman_es.ts" />
     <None Include="sandman_fr.ts" />
+    <None Include="sandman_hi.ts" />
     <None Include="sandman_it.ts" />
     <None Include="sandman_ja.ts" />
     <None Include="sandman_ko.ts" />

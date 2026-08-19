@@ -34,6 +34,10 @@ SBIE1415 Portable box name mismatch (ini name must match box section) in a box i
 SBIE1416 Portable box name is already in use by another box, include %3
 .
 
+2189;pop;inf;01
+SBIE2189 %2 is likely a Chromium-based application, but the image type is not Chrome; it will likely fail.
+.
+
 2230;pop;wrn;01
 SBIE2230 Failed to mount root for %2
 .
@@ -154,11 +158,44 @@ sandbox. Therefore, it is generally safer to grant only fake Administrator right
 although this may cause some installers to fail.
 .
 
+3820;txt;01
+Alpha
+.
+
 6008;pop;err;01
 The configuration %3 of box %2 requires a supporter certificate and can not be used without it.
 .
 
 6009;pop;err;01
 The configuration %3 of box %2 requires an advanced supporter certificate.
+.
+
+7994;txt;01
+You are attempting to use a feature Upgrade-Key without having an existing supporter certificate.
+This type of key requires you to have a pre-existing valid supporter certificate.
+Please enter your current certificate first, then apply the upgrade key.
+.
+
+7995;txt;01
+You are attempting to use a Renewal-Key without having an existing supporter certificate.
+This type of key requires you to have a pre-existing valid supporter certificate.
+Please enter your current certificate first, then apply the renewal key.
+.
+
+7996;txt;01
+Failed to retrieve certificate from server.
+%1
+.
+
+7997;txt;01
+Failed to connect to server. Please check your internet connection.
+.
+
+7998;txt;01
+Empty response from server.
+.
+
+7999;txt;01
+Unknown server error.
 .
 

@@ -1112,7 +1112,7 @@ _FX ACCESS_MASK Thread_CheckObject_CommonEx(
                     if (WriteAccess || proc2->confidential_box) {
 
                         protect_process = Process_GetConfEx_bool(proc2->box, nptr, L"DenyHostAccess", proc2->confidential_box);
-						BOOLEAN admin_only = Process_GetConfEx_bool(proc2->box, nptr, L"ProtectAdminOnly", FALSE);
+						BOOLEAN admin_only = Process_GetConfEx_bool(proc2->box, nptr, L"ProtectAdminOnly", TRUE);
 
                         //
                         // in case use specified wildcard "*" always grant access to sbiesvc.exe and csrss.exe
@@ -1120,7 +1120,7 @@ _FX ACCESS_MASK Thread_CheckObject_CommonEx(
                         //
 
                         if (protect_process /*&& MyIsProcessRunningAsSystemAccount(cur_pid)*/) {
-                            if (Util_IsSystemProcess(cur_pid, "sbiesvc.exe")
+                            if (Util_IsSystemProcess(cur_pid, "sbiesvc.exe") || Util_IsSystemProcess(cur_pid, "start.exe")
                                 || Util_IsSystemProcess(cur_pid, "csrss.exe")
                                 || Util_IsSystemProcess(cur_pid, "lsass.exe")
                                 || Util_IsProtectedProcess(cur_pid)
@@ -1264,10 +1264,10 @@ _FX NTSTATUS Thread_Api_OpenProcess(PROCESS *proc, ULONG64 *parms)
 
         //
         // scenario 1:  requesting access to another process in
-        // the same sandbox.  give full access.
+        // the same sandbox.
         //
 
-        DesiredAccess = PROCESS_ALL_ACCESS;
+        DesiredAccess = PROCESS_QUERY_INFORMATION;
 
     } else {
 

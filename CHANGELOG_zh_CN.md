@@ -1,6 +1,454 @@
 # 更新日志
-本项目的所有重要更改将在此文件中记录。
+本项目的所有重要更改均将记录在此文件中。
 本项目遵循 [语义化版本控制](http://semver.org/)。
+
+
+
+## [1.18.2 / 5.73.2] - 2026-08-??
+
+### 新增
+- 在沙盘管理器中新增了沙箱外窗口边框模式（`onoutside`、`ttloutside` 和 `alloutside`）；这些模式可将配置的边框绘制在应用程序框架之外，同时新增的 `BorderInsideMaximized=y` 设置（默认启用）可将边框和标签移至最大化或贴靠窗口的内部，使其保持可见
+- 为沙盘管理器进程树的手动展开和折叠状态增加了持久化功能，可在任务列表刷新和 UI 重启后保持不变 [#5491](https://github.com/sandboxie-plus/Sandboxie/pull/5491)
+
+### 变更
+- 修改了沙盘管理器的自动展开树功能，使其在展开沙箱组、沙箱和进程分支时，不会覆盖已保存的手动展开状态；如需恢复原有的全部展开/全部折叠行为，可将沙盘管理器 UI 配置选项 `Options/LegacyAutoExpandTree=true` [#5491](https://github.com/sandboxie-plus/Sandboxie/pull/5491)
+- 验证了与 Windows 内部版本 29634 的兼容性，并更新了 DynData
+
+### 修复
+- 修复了在沙箱间切换时，沙盘管理器文件面板列宽被重置的问题 [#5473](https://github.com/sandboxie-plus/Sandboxie/issues/5473)
+- 修复了一个可能导致已打开句柄列表报告错误的问题 [#5502](https://github.com/sandboxie-plus/Sandboxie/pull/5502)（感谢 NSShannon）
+- 修复了沙盘管理器文件面板和浏览文件功能阻止回收站删除已展开文件夹树的问题，使文件名排序不区分大小写，并让文件夹排在文件之前 [#5499](https://github.com/sandboxie-plus/Sandboxie/issues/5499)
+- 修复了尽管已记住组状态，沙盘管理器沙箱组在刷新、重启和沙箱移动过程中仍会折叠的问题 [#5477](https://github.com/sandboxie-plus/Sandboxie/issues/5477)
+- 修复了驱动程序与最新 Windows Insider 版本的不兼容问题
+- 修复了沙盘管理器文件面板将注册表日志文件（如 `RegHive.LOG1` 和 `RegHive.LOG2`）误视为 `RegHive` 子项的问题（因其共享文件名前缀），导致在选择一并删除时被遗漏 [#4788](https://github.com/sandboxie-plus/Sandboxie/issues/4788)
+
+
+
+## [1.18.1 / 5.73.1] - 2026-07-26
+
+### 新增
+- 新增 `CopyNewer` 文件迁移规则，可在保留现有沙箱副本的同时，从较新的主机文件进行刷新；沙盘管理器支持对该规则进行编辑。该规则仅适用于普通打开操作中匹配到的现有常规沙箱文件，并且仅当主机文件的最后写入时间较新时，才会主动替换其内容
+  - 该规则不适用于初始迁移、目录、只读路径、已删除文件或创建/覆盖操作
+- 新增使用 GUID 作为沙箱名称的选项 [#5485](https://github.com/sandboxie-plus/Sandboxie/pull/5485)
+
+### 变更
+- 更新了 Chromium_Elevation 模板，现使用特定的 `RunServiceAsSystem=...` 替代 `RunServicesAsSystem=y`，并增加了更多服务名称
+- 改进了沙盘配置设置的验证和自动补全功能，增加了禁用设置的别名、本地化描述、上下文感知警告以及模板特定的元数据和工具提示
+
+### 修复
+- 修复了增量更新机制无法复制新文件的问题
+- 修复了 `RunServiceAsSystem=...` 与 `UseSecurityMode=y` 的冲突问题
+- 修复了 `CryptSvc` 在 `RunServicesAsSystem=y` 下失败的问题
+- 修复了 SOCKS5 代理密码认证失败的问题，原因包括不安全的加密凭据解码、凭据长度处理不当、依赖区域设置的编码以及套接字部分发送
+
+
+
+## [1.18.0 / 5.73.0] - 2026-07-12
+
+### 新增
+- 为 `RecoverFolder` 和 `AutoRecoverIgnore` 模式增加了通配符支持（`*`、`?`、`**`），可在 DLL 和沙盘管理器中匹配 NT、DOS 和网络别名路径形式 [#3761](https://github.com/sandboxie-plus/Sandboxie/issues/3761) [#5318](https://github.com/sandboxie-plus/Sandboxie/issues/5318)
+- 新增 `UseAutoRecoverIgnoreForQuick=[y|n]`，用于将 `AutoRecoverIgnore` 模式应用于快速恢复窗口（默认启用）[#5278](https://github.com/sandboxie-plus/Sandboxie/issues/5278)
+- 为沙盘管理器的选项和设置对话框增加了待应用变更高亮显示；用于指示尚未应用的更改，以及不会立即生效的控件变更
+  - `Options/HighlightPendingChanges`（默认启用），可在全局设置 > 界面配置 > 用户界面中进行配置
+
+### 变更
+- 重构了崩溃转储机制
+- 修改了沙盘管理器自动删除恢复功能，使其复用已打开的恢复对话框作为删除确认对话框（无论过滤器状态如何），而不是将其关闭或静默继续执行沙箱删除
+
+### 修复
+- 修复了 Win32 进程映像路径查询返回沙箱化路径的问题，该问题可能暴露进程正在沙箱中运行 [#5437](https://github.com/sandboxie-plus/Sandboxie/pull/5437)
+- 修复了预期外的非用户 SID 配置文件和 Shell 查找噪音问题，通过屏蔽对应的 SBIE1406/SBIE1412 及其衍生的 SBIE1204 FileRootPath 消息 [#5422](https://github.com/sandboxie-plus/Sandboxie/pull/5422)
+- 修复了弹出通知中显示 NT 设备路径（`\Device\LanmanRedirector\...`）而非 UNC 格式的问题，导致显示混乱和恢复目标错误 [#711](https://github.com/sandboxie-plus/Sandboxie/issues/711)
+- 修复了在没有进程运行时点击“关闭直至所有程序停止”会永久挂起恢复功能的问题
+- 修复了当新文件事件路径与扫描恢复路径仅大小写不同时（例如 `downloads` 与 `Downloads`），沙盘管理器即时恢复会闪烁但不显示恢复窗口的问题
+- 改进了沙盘管理器在 SBIE 消息和通知洪泛时的响应能力，通过批量处理 UI 更新并减少每行渲染开销
+- 为 Chrome 设置重置增加了临时解决方案，可通过 `UseChromeSecurePreferencesHack=n` 禁用它 [#5184](https://github.com/sandboxie-plus/Sandboxie/issues/5184) [#5286](https://github.com/sandboxie-plus/Sandboxie/issues/5286) [#5180](https://github.com/sandboxie-plus/Sandboxie/issues/5180)
+  - 这更像是一个临时方案而非优雅的解决方案，我们让 `IsOS(OS_DOMAINMEMBER)` 返回 true，并在访问主机的“安全首选项”时强制迁移到沙箱中，并移除所有 `*_encrypted_hash` 条目
+  - 注意：这仅适用于设置和扩展；主机凭据、Cookies、密码等仍无法从沙箱内访问
+  - 如果需要，可采用手动方案：`注册表添加 "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f`
+  - 适用于 Microsoft Edge（`SOFTWARE\Policies\Microsoft\Edge`）、Brave 等
+- 修复了在沙箱中以系统身份运行服务时的 DPAPI 问题，使得沙箱化后能够访问 Chrome 主机凭据、Cookies、密码等
+  - 这需要启用沙箱化的提权服务 `SandboxService=GoogleChromeElevationService`，以系统身份运行 `RunServicesAsSystem=y`，并打开 SAM 端点 `OpenSamEndpoint=y`
+  - 还提供了一个便捷模板 `Template=Chromium_Elevation`
+  - 注意：每个 Chromium 衍生版有不同的服务名称，例如：MicrosoftEdgeElevationService、MicrosoftEdgeDevElevationService、MicrosoftCopilotElevationService、GoogleChromeElevationService、GoogleChromeDevElevationService、BraveElevationService
+
+
+
+## [1.17.9 / 5.72.9] - 2026-06-15
+
+### 变更
+- 更新了内置的 ImDisk 驱动程序至 3.0.3
+
+
+
+## [1.17.8 / 5.72.8] - 2026-06-14
+
+### 新增
+- 添加了 `DisableCustomTitleOpt=[process,][y|n]`，允许在具有自定义标题栏（Delphi VCL、Qt、Electron）的窗口上显示 `[#]` Sandboxie 标题标记，之前为了防止 DWM 重绘导致 CPU 占用循环而跳过了这些窗口 [#5387](https://github.com/sandboxie-plus/Sandboxie/issues/5387)
+
+### 变更
+- 更新了内置的 ImDisk 驱动程序至 3.0.2 [#5419](https://github.com/sandboxie-plus/Sandboxie/issues/5419)
+
+### 修复
+- 修复了针对预期非用户 SID 抑制日志的问题 [#5422](https://github.com/sandboxie-plus/Sandboxie/pull/5422)
+- 修复了以管理员身份运行程序时 SbieSvc.exe 出现 SBIE2218/2219 错误的问题 [#5417](https://github.com/sandboxie-plus/Sandboxie/issues/5417)
+- 修复了安装火绒安全软件后，explorer.exe 在应用程序隔离箱（Application Compartment）中崩溃的问题 [#5423](https://github.com/sandboxie-plus/Sandboxie/issues/5423)
+
+
+
+## [1.17.7 / 5.72.7] - 2026-06-07
+
+### 新增
+- 在“程序控制 > 强制进程选项”（Program Control > Force Process Options）下添加了 `ForceBoxDocs` 的全局设置复选框
+
+### 变更
+- 禁用了“编辑 ini 节”（Edit ini Section）中的富文本接受功能 [baa6968](https://github.com/sandboxie-plus/Sandboxie/commit/baa6968420e0ebd6b4cd93821cf019fcd0e0fc35)
+- 扩展了补全系统，增加了上下文感知过滤，改进了 INI 键解析，更新了正则表达式，并增强了工具提示位置布局 [6db2a04](https://github.com/sandboxie-plus/Sandboxie/commit/6db2a04f805b49a049b309212bfa8e3a8497ad99)
+
+### 修复
+- 修复了在沙盒内运行时 VMware 崩溃的问题，该问题由 NtQueryDirectoryObject 钩子返回非空终止字符串及 OBJECT_DIRECTORY_INFORMATION 结构中存在未初始化的填充字节导致，进而引发 QueryDosDeviceW 在 wcscmp 中崩溃 [#5390](https://github.com/sandboxie-plus/Sandboxie/issues/5390)
+- 添加了短名称回退缓存和启发式算法 [#5404](https://github.com/sandboxie-plus/Sandboxie/pull/5404)
+- 修复了在近期版本中引入的附加组件设置（addon setup）无法工作的问题
+- 修复了从 1.17.4 版本开始，使用“带数据保护的沙盒”（Sandbox with Data Protection）类型会导致 PowerShell 无限期等待的问题，而其他类型则没有此错误 [#5408](https://github.com/sandboxie-plus/Sandboxie/issues/5408)
+- 修复了在 v1.17.6 版本中导入加密沙盒不再创建加密镜像的问题 [#5399](https://github.com/sandboxie-plus/Sandboxie/issues/5399)
+- 修复了 EditorSettings 未应用模糊匹配，导致显示很少或没有补全条目，以及表格单元格高亮未更新的问题
+- 修复了枚举和删除文件夹时的错误 [#5406](https://github.com/sandboxie-plus/Sandboxie/issues/5406)
+- 修复了当 'ProtectAdminOnly=y'（默认值）且 SandMan 未以管理员身份运行时，黑盒导入/导出的问题
+
+
+
+## [1.17.6 / 5.72.6] - 2026-05-17
+
+### 新增
+- 当提权至管理员权限运行时，会在主窗口标题中新增“(Administrator)”标识
+
+### 变更
+- 改进沙盒导入/导出行为 [#5362](https://github.com/sandboxie-plus/Sandboxie/issues/5362)
+- 更改导出/导入格式，改为将沙盒配置保存为带有 `[BoxName]` 节标题的 `BoxName.ini`，而不是 `BoxName/BoxConfig.ini`
+  - 为保持向后兼容，导入功能同时支持旧格式和新格式
+  - 新格式与便携沙盒 1:1 兼容，可直接解压导出的归档并将其中的沙盒作为便携沙盒添加
+
+### 修复
+- 修复安全问题 ID-40：APC 注入漏洞
+- 修复使用自定义标题栏的应用程序（如 Delphi VCL）引起 DWM 过高占用 CPU 的问题
+
+
+
+## [1.17.5 / 5.72.5] - 2026-05-02
+
+### 新增
+- 新增针对 SBIE2205 OpenDesktop 请求默认桌面时的问题的解决方法
+
+### 修复
+- 修复 Epic Games 无法启动的问题 [#5281](https://github.com/sandboxie-plus/Sandboxie/issues/5281) [#5303](https://github.com/sandboxie-plus/Sandboxie/issues/5303) [#5344](https://github.com/sandboxie-plus/Sandboxie/pull/5344)
+- 修复自 1.17.3 起重命名沙盒失败并提示“The parameter is incorrect”的问题，该问题由新的 CIniFile::AddValue 中 ContainsCRLF 检查拒绝多行节内容导致
+- 修复沙盒成功重命名后，在 UI 界面中无法重新选择已重命名沙盒的问题
+- 修复在 `OpenWinClass=*` 下沙盒应用托盘图标不显示的问题；现通过代理 `Shell_NotifyIcon` 解决，可使用 `UseShellNotifyIconProxy` 禁用（默认启用，支持 `process` 和 `!process` 选择器）
+- 修复对 WS_EX_TOPMOST 扩展样式的跟踪，检测置顶状态变化，并根据情况使用合适的 HWND_TOPMOST 或 HWND_TOP 排序，确保最顶层状态变化时边框可见性和 Z 轴顺序正确 [#5358](https://github.com/sandboxie-plus/Sandboxie/issues/5358)
+
+
+
+## [1.17.4 / 5.72.4] - 2026-04-12
+
+### 新增
+- 新增选项 'BlockLocalLoop=y' ，用于阻止本地回环连接
+- 新增 Electron 检测功能，并在遇到问题时，显示 SBIE2189 消息及故障排查选项，可为遇到的应用程序设置 'SpecialImage=chrome,program.exe'
+- 新增自动化的 Electron 应用检测启发式算法，默认启用，可通过设置 'UseElectronDetection=n' 禁用
+
+### 变更
+- 硬件信息防护现在可以针对每个进程进行切换 [#5271](https://github.com/sandboxie-plus/Sandboxie/issues/5271)
+- 驱动现在使用 UTC 时间而非本地时间进行证书验证 [#4241](https://github.com/sandboxie-plus/Sandboxie/issues/4241) [#5316](https://github.com/sandboxie-plus/Sandboxie/issues/5316)
+
+### 修复
+- 修复易失性配置更新时的问题
+- 修复并补充缺失的 WaitServiceState，解决了“LINE 无法启动”/ 无签名 的问题 [#5306](https://github.com/sandboxie-plus/Sandboxie/issues/5306)
+- 修复（ipc）：在 NtQueryDirectoryObject 中 Ipc_GetName 失败时，释放 Ipc_Handles_CritSec [#5326](https://github.com/sandboxie-plus/Sandboxie/pull/5326)
+- 修复所有基于 Tauri 构建的 WebView2 应用程序用户界面无响应的问题 [#5327](https://github.com/sandboxie-plus/Sandboxie/issues/5327)
+- 修复驱动卸载过程中竞态条件导致蓝屏死机 (BSOD) 的问题 [#5329](https://github.com/sandboxie-plus/Sandboxie/pull/5329)
+- 修复 Key_MergeSubkeys 逻辑校验问题 [#5301](https://github.com/sandboxie-plus/Sandboxie/issues/5301)
+- 修复应用程序隔离模式下 File_WaitNamedPipe 的相关问题
+
+### 移除
+- 移除了已弃用的 'UseElectronWorkaround=y' 选项
+
+
+
+## [1.17.3 / 5.72.3] - 2026-03-29
+
+### 新增
+- 新增可配置的窗口位置设置，用于控制主窗口、非主窗口、文件恢复窗口以及通知窗口打开时所在的显示器，并支持可选的回退模式。[#4536](https://github.com/sandboxie-plus/Sandboxie/issues/4536) [#5238](https://github.com/sandboxie-plus/Sandboxie/pull/5238)
+  - 全局设置 > 界面配置 > 窗口选项
+- 新增“仅显示标签”边框模式选项（`onlbl`、`ttllbl`、`alllbl`），该模式隐藏彩色边框，仅显示沙箱名称（或别名）标签 [#5239](https://github.com/sandboxie-plus/Sandboxie/pull/5239)
+- 针对 Windows 11 新增 MIDI 兼容性模板 [#5183](https://github.com/sandboxie-plus/Sandboxie/issues/5183) [#5203](https://github.com/sandboxie-plus/Sandboxie/issues/5203#issuecomment-3938495163)（感谢 xsmolasses）
+- 新增系统托盘自定义选项（全局设置 > Shell 集成 > 系统托盘）：[#5254](https://github.com/sandboxie-plus/Sandboxie/pull/5254)
+  - “在托盘上下文菜单中显示图标”（`Options/TrayIcons`）—— 控制是否在托盘菜单中显示自定义沙箱图标
+  - “在托盘中显示沙箱别名而非名称”（`Options/TrayUseAlias`）—— 在精简型和常规托盘菜单中显示已配置的别名/显示名称
+  - “在托盘列表中以工具提示显示沙箱状态”（`Options/TrayStatusTip`）现支持三态设置：未勾选 = 从不，部分 = 按住 Ctrl 或 Shift 时（默认），已勾选 = 始终
+  - “在托盘列表中为沙箱显示叠加图标”（`Options/TrayOverlayIcons`）—— 在托盘图标上显示与主沙箱列表相同的沙箱状态叠加（未强制、磁盘镜像挂载/卸载、RAM 磁盘、自动删除），适用于精简组件及常规菜单
+- 新增通过 `HideBordersFromCapture` 进行边框捕捉排除
+  - 可在屏幕截图和屏幕录制中避免捕捉到边框及标签，默认对 `CoverBoxedWindows` 生效
+- 新增边框标签宽度和任务栏裁剪选项
+  - 通过 `BorderColor` 标签宽度和 `BorderExcludeTaskbar` 进行配置
+- 新增 `UseFakeShellDispatch` 选项，提供合成的 `IShellDispatch` 回退策略（可修复部分 WebView2 问题）
+  - 可通过 `UseFakeShellDispatch=process,n` 按进程禁用
+- 新增 `Template_OnScreenKeyboard`（Windows 11），修复与沙箱程序一起使用时屏幕键盘冻结的问题
+
+### 变更
+- 通过在沙箱模型中缓存自定义 `BoxIcon` 解析结果，而非每次刷新时重新加载图标资源，减少了 GUI 持续 CPU 占用
+- 沙盘管理器主定时器中的互联网连通性检测降低为每 60 秒一次，并缓存检测结果
+  - 只有设备具备网络连接时才运行更新程序，避免无效的网络请求并减少反复检查 `HKLM\\SYSTEM\\Setup\\SystemSetupInProgress` 注册表
+- 修改重复沙箱行为，现活动沙箱别名在复制时也会添加“Copy”后缀
+- 托盘中沙箱/分组排序方式同步主沙箱列表模式（手动/升序/降序），包含分组排序
+- 托盘和沙箱子菜单的图标缓存优化，仅在缓存未命中时解析 `DblClickAction` 目标路径（`GetCommandFile`），并缓存 `LoadWindowsIcon(path,index)` 结果，减少打开菜单时重复提取系统图标
+- 优化了边框渲染效果
+
+### 修复
+- 修复了在网络选项页面下，将未列出的进程的网络模式设为非默认后离开页面时，错误弹出的“尚有变更未保存”提示
+- 修复了复制后的沙箱未保留原有的沙箱分组归属问题
+- 修复了在分组下双击空路径/命令行导致崩溃的问题 [#5253](https://github.com/sandboxie-plus/Sandboxie/pull/5253)
+- 修复了精简托盘沙箱列表对于沙箱名称过长的裁切问题，现根据字体度量为每项精确计算宽度，并可在任意 DPI 正确缩放 [#5254](https://github.com/sandboxie-plus/Sandboxie/pull/5254)
+- 修复了 `SbieDll` 中 WOW64 注册表视图在开启相对键时的继承问题，父级 `KEY_WOW64_32KEY/KEY_WOW64_64KEY` 语义跨 `NtOpenKey`/`NtCreateKey` 保持一致 [#5171](https://github.com/sandboxie-plus/Sandboxie/issues/5171) [#5244](https://github.com/sandboxie-plus/Sandboxie/pull/5244)
+- 修复了在 `ScanStartMenu` 中的句柄泄漏：`IShellLinkW` 和 `IPersistFile` COM 接口在 `ResolveShortcut` 中未释放，导致每个被扫描的 `.lnk` 快捷方式均常驻句柄（文件、注册表、图标）；现以 `CComPtr` 替换原始指针确保各类退出路径均能调用 `Release()`
+- 修复 `ClosedClsid` 与 `ClosedRT` 设置的解析逻辑 [#5263](https://github.com/sandboxie-plus/Sandboxie/pull/5263)
+- 修复安全问题 ID-32：EditPassword 哈希熵丢失，新设置的密码将使用加盐 SHA-256 并以 Base64 编码
+  - 注：此修复仅对新设置的密码生效，现有密码仍为弱加密
+- 修复安全问题 ID-33：可被沙箱进程利用的本地拒绝服务（DoS）漏洞 CVE-2026-32603（由 sammy12342 报告）
+- 修复安全问题 ID-34：Sandboxie-Plus 通过 INI CRLF 注入绕过 EditAdminOnly 的问题 CVE-2026-34458（由 sammy12342 报告）
+- 修复安全问题 ID-35：GetRawInputDeviceInfoSlave 相关问题 CVE-2026-34459（由 sammy12342 报告）
+- 修复安全问题 ID-36：RunSbieCtrl 相关问题 CVE-2026-34461（由 Yanchon918s 报告）
+- 修复安全问题 ID-37：ProcessServer 处理器中的名称校验问题 CVE-2026-34462（由 Yanchon918s 报告）
+- 修复安全问题 ID-38：NamedPipeServer 参数校验问题 CVE-2026-34464（由 Yanchon918s 报告）
+- 修复安全问题 ID-39：通过 UpdUtil 附加组件安装中的 TOCTOU 实现本地权限提升 CVE-2026-34596（由 sammy12342 报告）
+
+
+
+## [1.17.2 / 5.72.2] - 2026-02-18
+
+### 新增
+- 新增边框标签别名支持
+
+### 变更
+- 改进了边框模式 UI 标签，并在选择器中公开了 `all` 模式
+- 重构了 SandMan 中的 `重命名沙箱` 对话框：添加了专用的别名控制项，持久化保存了 `隐藏别名` 偏好设置，改进了稳定/动态对话框大小调整，现在禁用的别名将以 `BoxAliasDisabled` 的形式保存 [#4657](https://github.com/sandboxie-plus/Sandboxie/pull/4657) [#5231](https://github.com/sandboxie-plus/Sandboxie/pull/5231)
+
+### 修复
+- 修复了当边框标签文本被禁用（`no` 模式）时，边框覆盖无法消除的问题 [#5230](https://github.com/sandboxie-plus/Sandboxie/pull/5230)
+- 修复了当前聚焦窗口变为无效/不可见时，边框仍然显示的问题
+- 修复了 `all` 边框模式下透明度更新无法一致应用所配置 alpha 的问题
+- 修复了在模板设置的 Config Dump 标签下出现重复的 Name 列的问题 [#4900](https://github.com/sandboxie-plus/Sandboxie/issues/4900) [#5232](https://github.com/sandboxie-plus/Sandboxie/pull/5232)
+
+
+
+## [1.17.1 / 5.72.1] - 2026-02-16
+
+### 修复
+- 修复了在 Windows 10 上由 1.17.0 版本引入的 SbieSvc IPC 回归问题 [#5226](https://github.com/sandboxie-plus/Sandboxie/issues/5226)
+- 修复了 Microsoft Edge 关闭时无法完全终止的回归问题
+- 修复了经典视图模式下的崩溃问题
+- 修复了 chkNotUntrusted 和 chkCreateToken 的相关逻辑
+
+
+
+## [1.17.0 / 5.72.0] - 2026-02-16
+
+### 新增
+- 为 Sandboxie 服务应用程序添加了图标 [#5160](https://github.com/sandboxie-plus/Sandboxie/issues/5160#issuecomment-3706138019)
+- 在边框中添加了沙箱名称 [#3746](https://github.com/sandboxie-plus/Sandboxie/issues/3746)
+- 新增全局选项 'ForceBoxDocs=y'，允许强制所有从沙箱路径打开文件的程序进入相应的沙箱
+- 新增沙箱边框模式 'all'，启用后沙箱进程的所有窗口都会显示边框，而不仅仅是当前聚焦的窗口
+- 为 SbieCtrl 添加了缺失的序列号支持
+- 新增一次性导出/导入多个沙箱的机制
+- 新增 'UseAlternateIpcNaming=y'，此模式下沙盒对象名字会被添加后缀，而不是在单独的 NT Object 命名空间中
+  - 注意：此模式仅支持应用隔离沙箱，否则 SbieDrv 会阻止访问
+
+### 变更
+- 验证了与 Windows build 28020 的兼容性并更新了 DynData
+- 启用 'UseCreateToken=y' 时，总是使用 'CopyTokenAttributes=y' 以修复 UWP 问题
+  - 要强制使用 'UseCreateToken=y'，'SandboxieAllGroup=y' 现在是新默认值
+- 现在可以在沙箱选项中设置 'NoUntrustedToken=y'
+- 重构了 SbieSvc 中的 LPC 服务器实现，后续将切换为 ALPC
+- 改进了 Application Compartment 的 IPC 处理
+- 改进了 RenameSection 的处理，以保留注释和原始节顺序 [#5220](https://github.com/sandboxie-plus/Sandboxie/pull/5220)
+
+### 修复
+- 修复了启动 UWP 应用沙箱时注册表挂载失败的问题
+- 修复了 API CryptUnprotectData 始终返回错误的 ppszDataDescr [#5191](https://github.com/sandboxie-plus/Sandboxie/issues/5191)
+- 修复了 SbieDll.dll 中的句柄泄漏问题
+- 修复了视图中切换沙箱排序的相关问题 [#5201](https://github.com/sandboxie-plus/Sandboxie/pull/5201)（感谢 Catreap）
+- 修复了 Microsoft Edge 144 在应用隔离沙箱中崩溃的问题 [#5188](https://github.com/sandboxie-plus/Sandboxie/issues/5188)
+- 修复了在沙箱中进行多次文件搜索时文件搜索栏崩溃的问题 [#5166](https://github.com/sandboxie-plus/Sandboxie/issues/5166) [#5221](https://github.com/sandboxie-plus/Sandboxie/pull/5221)
+
+
+
+## [1.16.9 / 5.71.9] - 2026-01-02
+
+### 新增
+- 新增书面挪威语翻译 [#5141](https://github.com/sandboxie-plus/Sandboxie/issues/5141)（感谢 divinity76）
+- 用户界面：高亮上次使用的沙盒 [#5054](https://github.com/sandboxie-plus/Sandboxie/issues/5054)
+
+### 变更
+- 在默认 COM 模板中新增 `ClosedClsid={9BA05972-F6A8-11CF-A442-00A0C90A8F39}`，用于阻止 ShellWindows
+
+### 修复
+- 修复与 Thunderbird 146 的不兼容问题
+- 修复未启用“较低机密性模板”时，机密沙盒中没有声音的问题
+- 修复代理测试器的问题（在非英文 Windows 上会因 ping.exe 本地化而失败）
+- 修复 WinMerge 因注册表读取问题持续冻结的问题 [#5122](https://github.com/sandboxie-plus/Sandboxie/issues/5122)
+- 修复在 Sandboxie 下运行 Firefox 会导致事件查看器中出现 AppModel-Runtime 错误的问题 [#5135](https://github.com/sandboxie-plus/Sandboxie/issues/5135)
+- 修复 Tor Browser 标签页在最高安全级别下崩溃的问题 [#5116](https://github.com/sandboxie-plus/Sandboxie/issues/5116)
+- 修复 Chrome Portable 窗口工具提示卡住的问题 [#5051](https://github.com/sandboxie-plus/Sandboxie/issues/5051)
+- 修复 Windows Server 2022 上高负载 GPU 进程创建期间 SbieDrv.sys 中的蓝屏死机（0x50）问题 [#5149](https://github.com/sandboxie-plus/Sandboxie/issues/5149)
+- 修复 OfficeClickToRun.exe 总是崩溃，导致 WINWORD.EXE 无法正常工作的问题 [#5153](https://github.com/sandboxie-plus/Sandboxie/issues/5153)
+- 修复卸载/删除仅安装在沙盒环境中的软件时长时间卡顿的问题 [#5028](https://github.com/sandboxie-plus/Sandboxie/issues/5028)
+
+
+
+## [1.16.8 / 5.71.8] - 2025-11-24
+
+### 新增
+- 在文件面板新增了文件搜索/筛选功能，可通过 Ctrl+F 打开
+- 为 'ProtectAdminOnly=y/n' 增加界面支持
+
+### 修复
+- 修复 32 位 SbieDll.dll 中 SbieApi_QueryDrvInfo 的问题，该问题会导致证书状态被错误地提示为异常
+
+
+
+## [1.16.7 / 5.71.7] - 2025-11-16
+
+### 新增
+- 在箱选项中增加 'NoRestartOnPCA=y' 的复选框
+
+### 变更
+- 将默认 'UseWin32kHooks' 从 'y' 恢复为 'n'，因为该配置会导致其他应用程序出现异常
+- 修复安全问题 ID-31，改进在 WoW64 下的命名系统调用（感谢 pentester.z）
+
+### 修复
+- 修复在启用 'SandboxieAllGroup=y' 时，'OpenWndStation=y' 配置项不生效的问题
+- 修复安全问题 ID-28：SbieIniServer 中缺失参数校验（感谢 DepthFirstDisclosures）
+- 修复安全问题 ID-29：证书解析问题（感谢 pentester.z）
+- 修复安全问题 ID-30：获取驱动信息的问题（感谢 pentester.z）
+- 修复 SbieDll.dll 中与 SbieApi_DeviceHandle 相关的潜在句柄泄漏问题。 [#5097](https://github.com/sandboxie-plus/Sandboxie/issues/5097)
+
+
+
+## [1.16.6 / 5.71.6] - 2025-11-10
+
+### 变更
+- 现已将 'UseWin32kHooks=y' 设为所有进程的默认配置，大幅提升了对 Electron 应用的兼容性。
+
+### 修复
+- 修复在 Windows 7 上无法连接驱动的问题 [#5068](https://github.com/sandboxie-plus/Sandboxie/issues/5068)
+- 修复 'Actual Budget' 不再工作的问题 [#5071](https://github.com/sandboxie-plus/Sandboxie/issues/5071)
+- 修复与 Firefox Nightly 146 的不兼容问题
+
+
+
+## [1.16.5 / 5.71.5] - 2025-11-04
+
+### 新增
+- 增强 INI 编辑器：对“编辑 INI 部分”对话框进行了重大改进
+  - 专用编辑器设置：新增“编辑器设置”窗口，可配置所有 INI 编辑器行为
+  - 设置验证：INI 键值现可根据 `SbieSettings.ini` 进行可视化验证，以便发现配置错误（1.16.2）
+  - 上下文提示：为 INI 键值提供来自 `SbieSettings.ini` 的元数据提示，并可配置提示详细程度（1.16.2，1.16.4）
+  - 自动补全：基于 `SbieSettings.ini` 进行 INI 键值自动补全，并采用用户手动授权的机制（1.16.3）
+  - 新增配置选项：[`Sandboxie-Plus.ini`]
+    - `Options/ValidateIniKeys` bool — 启用/禁用 INI 键值验证（默认：true）（1.16.2）
+    - `Options/EnableIniTooltips` int — 控制 INI 提示详细程度：0=无提示，1=基本信息，2=完整详情（1.16.2）
+    - `Options/EnablePopupTooltips` int — 控制弹窗提示详细程度：0=无提示，1=基本信息，2=完整详情（1.16.4）
+    - `Options/AutoCompletionConsent` bool — 用户同意启用自动补全功能（1.16.3）
+    - `Options/EnableAutoCompletion` int — 自动补全模式：0=禁用，1=手动/区分大小写，2=自动/区分大小写（1.16.3）
+    - `Options/EnableFuzzyMatching` bool — 启用自动补全的模糊匹配（1.16.3）
+  - 通过 `SbieSettings.user.ini` 自定义：
+    - 用户现在可以使用 `SbieSettings.user.ini` 文件进一步微调配置（1.16.3）
+    - 有关这些选项的详细配置指南，请参阅 `SbieSettings.ini` 文件中的注释，其中包含所有新旧设置的说明，为高级配置提供参考
+- 保留自定义沙盒颜色：为沙盒设置的自定义颜色在更改 `Box Type Preset` 后仍将保留 [#5025](https://github.com/sandboxie-plus/Sandboxie/pull/5025)（感谢 Pinefone）
+- 为沙盒边框设置新增 Alpha 透明度 [#5037](https://github.com/sandboxie-plus/Sandboxie/pull/5037)
+- 用户界面：启动时默认折叠所有分组 [#5052](https://github.com/sandboxie-plus/Sandboxie/issues/5052)
+- 用户界面：新增菜单选项，可折叠/展开分组 [#5053](https://github.com/sandboxie-plus/Sandboxie/issues/5053)
+
+### 变更
+- 支持证书可包含多个 HwID，以简化处理
+- 右键菜单图标升级 [#5038](https://github.com/sandboxie-plus/Sandboxie/issues/5038)
+- 改进 Win32 系统调用处理（实验性），当设置 `UseWin32kFilterTable=y` 时，将在适用情况下使用 `KeServiceDescriptorTableFilter` 代替 `KeServiceDescriptorTableShadow`
+- 改进默认工具栏布局
+
+### 修复
+- 修复当 VPN/绑定适配器断开连接时 BindAdapter 的可靠性问题 [#5055](https://github.com/sandboxie-plus/Sandboxie/pull/5055) [#4896](https://github.com/sandboxie-plus/Sandboxie/issues/4896)
+- 修复 WOW6432Node 错误，在必要创建第二个不存在的子键时变为 `HKLM\SOFTWARE\WOW6432Node\WOW6432Node` [#5057](https://github.com/sandboxie-plus/Sandboxie/issues/5057)
+- 修复 PowerShell 能够在添加到程序控制的文件夹中启动可执行文件的问题 [#5027](https://github.com/sandboxie-plus/Sandboxie/issues/5027)
+
+
+## [1.16.4 / 5.71.4] - 2025-10-02
+
+### 新增
+- 新增选项，可阻止非管理员会话主进程（`sandman.exe` 或 `sbiectrl.exe`）访问加密沙盒数据
+  **注意**：该功能现已默认启用，如需禁用，请使用 `ProtectAdminOnly=n`
+
+### 修复
+- 修复 **Sandboxie-Plus 1.16.3** 在 Windows 预览版 Build 27943 无法连接驱动的问题 (#5003)
+- 修复最新版本 Signal 崩溃的问题
+
+### 变更
+- 改进了 `Thread_CheckObject_CommonEx` 对加密沙盒的检查
+
+
+## [1.16.3 / 5.71.3] - 2025-09-08
+### 变更
+- 重构驱动导入机制，尽管使用 VS2022 构建，仍可在 Windows 7 上加载 (#4942)
+- 改进深色模式配色方案
+- 切换到 Qt 6.8.3，并加入 Windows 7 兼容补丁
+- 验证了与 Windows Build 27934 的兼容性，并更新了 DynData
+
+### 修复
+- 修复 1.16.2 版本托盘菜单缺失的问题 (#4940)
+- 修复高 DPI 安全桌面下的 UAC 提示布局问题 (#4953，感谢 gexgd0419)
+- 修复 UAC 提示框中阿拉伯语的 RTL（从右到左）布局问题 (#4957，感谢 gexgd0419)
+- 修复 1.16.1 深色模式下帮助弹窗背景颜色错误的问题 (#4903)
+- 修复网络选项在编辑时无法保存的问题 (#4899)
+- 修复安装程序未清理旧版 Sandboxie 1.16.x 遗留文件的问题 (#4934)
+- 修复以管理员身份重启时未显示窗口的问题
+
+### 移除
+- 移除早已被新实现替代的过时代码
+
+
+## [1.16.2 / 5.71.2] - 2025-07-28
+### 新增
+- 在“编辑 ini 配置节”中新增可切换的 INI 键验证功能 (#4915，感谢 offhub)
+- 新增可切换的逐键工具提示支持 (#4928，感谢 offhub)
+- 新增在 SandMan 中使用全新 Qt Windows 11 风格 的选项 (#4927，感谢 LumitoLuma)
+
+### 变更
+- ImBox 在访问加密沙盒卷时，不再更新容器文件的时间戳
+
+### 修复
+- 修复 Windows 11 24H2 Build 26100.4770 导致 Firefox Portable 140.0.4 / 141.0 在沙盒中启动时无响应的问题 (#4920)
+- 修复安全问题 ID-27：密码更改时加密沙盒密钥泄漏（回移植了 MajorPrivacy 的强化版 ImBox）CVE-2025-54422（感谢 love-code-yeyixiao）
+- 修复 Firefox Nightly 沙盒挂钩错误
+
+### 移除
+- 移除已废弃的 Bullguard Internet Security 模板
+- 移除已废弃的 Bsecure CloudCare 模板
+- 移除已废弃的 CyberPatrol 模板
+
+
+## [1.16.1 / 5.71.1] - 2025-07-06
+### 新增
+- 新增“设置窗口中的 UI 字体”选项 (#4894，感谢 srdr0p)
+
+### 变更
+- 更新工具链至 MSVC 2022，因 GitHub CI runner 2019 已停止支持
+  **注意**：此变更导致不再支持 Windows 7 和 32 位操作系统，因为 2022 工具链不再支持这些目标驱动构建
+- 切换到 Qt6，同时也不再支持 Windows 7
+
+### 修复
+- 修复创建快捷方式时链接目录不完整的问题 (#4882)
+- 修复 `BindAdapter` 无效的问题（即使绑定的适配器/VPN 被禁用，仍可访问互联网）(#4896)
+- 修复 `GetFullPathName()` 使用以反斜杠开头的字符串时出现的异常问题 (#4867)
+- 修复部分 UI 绑定安装语言 ID 的问题 (#4859)
+- 修复 UAC 提示框布局异常的问题 (#4863)
+- 修复启用 “Mark of The Web 强制” 时忽略“非沙盒运行”选项的问题 (#4856)
 
 
 ## [1.16.0 / 5.71.0] - 2025-06-03
@@ -100,7 +548,7 @@
 - 修复了删除内容消息框是否应始终在最上方的问题 [#4673](https://github.com/sandboxie-plus/Sandboxie/issues/4673)
 
 
-## [1.15.9 / 5.70.9] - 2025-03-??
+## [1.15.9 / 5.70.9] - 2025-04-02
 
 ### 新增
 - 复制沙箱，并从 UI 中获取内容 [#4542](https://github.com/sandboxie-plus/Sandboxie/issues/4542)
