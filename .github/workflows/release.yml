@@ -387,8 +387,8 @@ jobs:
               'The kernel driver is signed with a self-issued certificate, so Windows needs to be told to trust it once:',
               '',
               '1. Turn Secure Boot off in UEFI and turn Memory Integrity off in Windows Security.',
-              '2. Run ``bcdedit /set testsigning on`` from an elevated prompt and reboot.',
-              '3. Import the signing certificate into ``LocalMachine\Root`` and ``LocalMachine\TrustedPublisher``.',
+              '2. Run `bcdedit /set testsigning on` from an elevated prompt and reboot.',
+              '3. Import the signing certificate into `LocalMachine\Root` and `LocalMachine\TrustedPublisher`.',
               '',
               "Step 3 only has to be repeated when the certificate itself changes (SHA-1 $bt$thumbprint$bt).",
               'See the README for the exact commands.'

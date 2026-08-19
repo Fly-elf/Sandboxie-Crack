@@ -243,6 +243,10 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+*.pem
+*.cer
+*.crt
+*.key
 *.publishsettings
 orleans.codegen.cs
 
