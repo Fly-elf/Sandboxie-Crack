@@ -68,51 +68,42 @@ Reboot. Windows will show a "Test Mode" watermark on the desktop from now on.
 .\Sandboxie-Plus-x64-v1.18.2.exe
 ```
 
-The driver will fail to start at the end of the installation. That is expected — Windows does not trust
-the signing certificate yet. Nothing is broken; continue with step 6.
+Leave the **Trust the certificate the Sandboxie driver is signed with** task ticked. The installer imports
+the certificate into the machine's `Root` and `TrustedPublisher` stores, which is what lets Windows load
+the driver; uninstalling removes it again. The task is only offered when the certificate is not already
+trusted, so it disappears on later updates.
 
-### 6. Trust the signing certificate
-
-The certificate is embedded in the driver itself, so you can import it straight from the installed file:
-
-```powershell
-$sys  = 'C:\Program Files\Sandboxie-Plus\SbieDrv.sys'
-$cert = (Get-AuthenticodeSignature $sys).SignerCertificate
-
-foreach ($name in 'Root', 'TrustedPublisher') {
-    $store = Get-Item "Cert:\LocalMachine\$name"
-    $store.Open('ReadWrite')
-    $store.Add($cert)
-    $store.Close()
-}
-```
-
-### 7. Start Sandboxie
-
-```powershell
-& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieDrv
-& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieSvc
-sc.exe query SbieDrv    # STATE : 4  RUNNING
-```
+If test signing is off, the installer says so on the Ready page and tells you the command to fix it.
 
 Launch Sandboxie-Plus from the Start menu. Done.
 
-**Future updates:** steps 2 to 4 are permanent, and step 6 only has to be repeated if the signing
-certificate changes. Each release lists the certificate's SHA-1 thumbprint in its notes, so you can tell
-at a glance whether you already trust it.
+**Future updates:** steps 2 to 4 are permanent, and the certificate stays trusted, so from here on updating
+is just running the new installer.
 
 ### If the driver still will not start
 
 Error 577, `SBIE1103` or `SBIE9153` all mean the same thing: the signature was not accepted. Check that
-test signing really is on and that the certificate landed in both stores:
+test signing is on and that the certificate really landed in the stores:
 
 ```powershell
 bcdedit /enum "{current}" | Select-String testsigning          # must say Yes
 Get-AuthenticodeSignature 'C:\Program Files\Sandboxie-Plus\SbieDrv.sys' | Select-Object Status
 ```
 
-`Status` should be `Valid`. If it is not, redo step 6 and reboot. A Windows update can silently re-enable
-Memory Integrity, so re-check step 3 as well.
+`Status` should be `Valid`. If it is not, import the certificate by hand and start the services:
+
+```powershell
+$sys  = 'C:\Program Files\Sandboxie-Plus\SbieDrv.sys'
+$cert = (Get-AuthenticodeSignature $sys).SignerCertificate
+foreach ($name in 'Root', 'TrustedPublisher') {
+    $store = Get-Item "Cert:\LocalMachine\$name"
+    $store.Open('ReadWrite'); $store.Add($cert); $store.Close()
+}
+& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieDrv
+& 'C:\Program Files\Sandboxie-Plus\KmdUtil.exe' start SbieSvc
+```
+
+A Windows update can silently re-enable Memory Integrity, so re-check step 3 as well.
 
 To undo everything, uninstall Sandboxie-Plus and run:
 
@@ -144,7 +135,11 @@ gh workflow run release.yml --repo <owner>/<repo> --ref master
 
 To sign builds with your own certificate, set the `SIGN_CERT_PFX` (base64 of a `.pfx`) and
 `SIGN_CERT_PASSWORD` repository secrets. Without them the driver keeps a throwaway certificate that
-changes on every build, meaning step 6 above has to be repeated after every update.
+changes on every build, so the installer adds a new one to the certificate stores on every update.
+
+The certificate-trust task is not part of `Installer/Sandboxie-Plus.iss`; it is appended to a working copy
+at packaging time from [`.github/installer/cert_trust.iss`](./.github/installer/cert_trust.iss), so the
+upstream installer script stays untouched.
 
 ## Licensing and credits
 

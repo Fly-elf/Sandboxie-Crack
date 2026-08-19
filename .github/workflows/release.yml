@@ -81,6 +81,15 @@ jobs:
           "head_sha=$($info.headSha)"    >> $env:GITHUB_OUTPUT
           "head_branch=$($info.headBranch)" >> $env:GITHUB_OUTPUT
 
+      # Only the installer patch files; everything else comes from the CI run's
+      # artifacts, at the very commit that produced them.
+      - name: Checkout installer patches
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.ci.outputs.head_sha }}
+          sparse-checkout: .github/installer
+          path: patches
+
       # The .iss expects its sources under ".\Release\<MyAppSrc>\", relative to
       # the directory holding the script, so download straight into that layout.
       # Artifact roots map 1:1 onto Installer/SbiePlus_x64, Installer/SbiePlus_a64
@@ -210,15 +219,35 @@ jobs:
           # certificate either. Just confirm a signature is embedded.
           $sig = Get-AuthenticodeSignature $targets[0].FullName
           if (-not $sig.SignerCertificate) { throw 'No signature embedded after signing.' }
-          $subject    = $sig.SignerCertificate.Subject
-          $thumbprint = $sig.SignerCertificate.Thumbprint
-          Write-Host "Signed $($targets.Count) driver(s) with $subject ($thumbprint)"
+          Write-Host "Signed $($targets.Count) driver(s) with $($sig.SignerCertificate.Subject)"
 
-          'signed=true'                >> $env:GITHUB_OUTPUT
-          "subject=$subject"           >> $env:GITHUB_OUTPUT
-          "thumbprint=$thumbprint"     >> $env:GITHUB_OUTPUT
+          'signed=true'                    >> $env:GITHUB_OUTPUT
           "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
-          "SIGN_PFX=$pfx"              >> $env:GITHUB_ENV
+          "SIGN_PFX=$pfx"                  >> $env:GITHUB_ENV
+
+      # Runs whether or not a persistent certificate was configured: the
+      # installer has to trust whichever certificate actually signed the driver,
+      # including the throwaway WDK one.
+      - name: Export the signing certificate
+        id: cert
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $sys = "$env:STAGE\Release\SbiePlus_x64\SbieDrv.sys"
+          if (-not (Test-Path $sys)) { $sys = "$env:STAGE\Release\SbiePlus_a64\SbieDrv.sys" }
+
+          $cert = (Get-AuthenticodeSignature $sys).SignerCertificate
+          if (-not $cert) { throw "$sys carries no signature to export." }
+
+          # DER-encoded public certificate; certutil -addstore reads this directly.
+          [IO.File]::WriteAllBytes("$env:STAGE\SbieSigning.cer", $cert.Export('Cert'))
+
+          Write-Host "Certificate: $($cert.Subject)"
+          Write-Host "Thumbprint : $($cert.Thumbprint)"
+          "subject=$($cert.Subject)"       >> $env:GITHUB_OUTPUT
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
 
       - name: Patch the Inno Setup script
         shell: pwsh
@@ -250,6 +279,31 @@ jobs:
             if ($iss -match '(?m)^Filename:.*imdisk') { throw 'Failed to strip the ImDisk [Run] entry.' }
             if ($iss -match '(?m)^Name:\s*"InstallImDisk"') { throw 'Failed to strip the ImDisk [Tasks] entry.' }
           }
+
+          # 3) Wire up certificate trust. The [Tasks] checkbox is only offered when
+          #    the certificate is not already trusted, the [Run] entries must come
+          #    first so the driver is loadable by the time KmdUtil starts it, and
+          #    the [Code] additions plus [UninstallRun] are appended wholesale from
+          #    .github/installer/cert_trust.iss.
+          $patch = "$env:GITHUB_WORKSPACE\patches\.github\installer\cert_trust.iss"
+          if (-not (Test-Path $patch)) { throw "Missing installer patch: $patch" }
+
+          $iss = "#define MyCertThumbprint ""${{ steps.cert.outputs.thumbprint }}""`r`n" + $iss
+
+          $task = 'Name: "TrustCert"; Description: "Trust the certificate the Sandboxie driver is signed with"; MinVersion: 0.0,5.0; Check: ShouldTrustCert'
+          $iss = $iss -replace '(?m)^\[Tasks\]\r?$', "[Tasks]`r`n$task"
+          if ($iss -notmatch 'TrustCert') { throw 'Failed to add the [Tasks] entry.' }
+
+          $file = 'Source: ".\SbieSigning.cer"; DestDir: "{app}"; MinVersion: 0.0,5.0; Flags: ignoreversion; Check: not IsPortable'
+          $iss = $iss -replace '(?m)^\[Files\]\r?$', "[Files]`r`n$file"
+          if ($iss -notmatch 'SbieSigning\.cer') { throw 'Failed to add the [Files] entry.' }
+
+          $addstore = 'Filename: "{sys}\certutil.exe"; Parameters: "-addstore -f {0} ""{app}\SbieSigning.cer"""; StatusMsg: "Trusting the driver signing certificate..."; Flags: runhidden; Tasks: TrustCert'
+          $run = ($addstore -replace '\{0\}', 'Root') + "`r`n" + ($addstore -replace '\{0\}', 'TrustedPublisher')
+          $iss = $iss -replace '(?m)^\[Run\]\r?$', "[Run]`r`n$run"
+          if ($iss -notmatch 'addstore -f Root') { throw 'Failed to add the [Run] entries.' }
+
+          $iss = $iss.TrimEnd() + "`r`n" + (Get-Content $patch -Raw)
 
           # Keep the original UTF-8 BOM: Inno Setup uses it to pick the encoding.
           Set-Content -Path $path -Value $iss -NoNewline -Encoding utf8BOM
@@ -368,8 +422,8 @@ jobs:
           # break out of the YAML block scalar.
           $bt = [char]96
           $signed     = '${{ steps.sign.outputs.signed }}' -eq 'true'
-          $subject    = '${{ steps.sign.outputs.subject }}'
-          $thumbprint = '${{ steps.sign.outputs.thumbprint }}'
+          $subject    = '${{ steps.cert.outputs.subject }}'
+          $thumbprint = '${{ steps.cert.outputs.thumbprint }}'
 
           $notes = @(
             'Sandboxie-Plus installer packaged from CI artifacts - nothing is recompiled here.',
@@ -378,33 +432,29 @@ jobs:
             '|---|---|',
             "| Version | $bt$version$bt |",
             "| Source commit | $bt$sha$bt |",
-            "| CI run | $runUrl |"
+            "| CI run | $runUrl |",
+            "| Driver signed by | $bt$subject$bt |",
+            "| Certificate SHA-1 | $bt$thumbprint$bt |",
+            '',
+            '### Before installing',
+            '',
+            'The driver is signed with a self-issued certificate, so the machine has to be prepared once:',
+            '',
+            '1. Turn Secure Boot off in UEFI.',
+            '2. Turn Memory Integrity off in Windows Security > Device security > Core isolation.',
+            '3. Run `bcdedit /set testsigning on` from an elevated prompt and reboot.',
+            '',
+            'The installer trusts the signing certificate itself - it offers a *Trust the certificate the',
+            'Sandboxie driver is signed with* task, ticked by default and only shown when the certificate is',
+            'not already trusted. Uninstalling removes it again. See the README for details.'
           )
 
-          if ($signed) {
-            $notes += "| Driver signed by | $bt$subject$bt |"
-            $notes += "| Certificate SHA-1 | $bt$thumbprint$bt |"
+          if (-not $signed) {
             $notes += @(
               '',
-              '### Before installing',
-              '',
-              'The kernel driver is signed with a self-issued certificate, so Windows needs to be told to trust it once:',
-              '',
-              '1. Turn Secure Boot off in UEFI and turn Memory Integrity off in Windows Security.',
-              '2. Run `bcdedit /set testsigning on` from an elevated prompt and reboot.',
-              '3. Import the signing certificate into `LocalMachine\Root` and `LocalMachine\TrustedPublisher`.',
-              '',
-              "Step 3 only has to be repeated when the certificate itself changes (SHA-1 $bt$thumbprint$bt).",
-              'See the README for the exact commands.'
-            )
-          } else {
-            $notes += @(
-              '',
-              '### Before installing',
-              '',
-              'No persistent signing certificate was configured for this build, so the driver still carries the',
-              'throwaway WDK test certificate generated on the build runner. It is different for every build and',
-              'has to be re-trusted each time. See the README for how to set up a persistent certificate.'
+              'This build has no persistent signing certificate configured, so it carries a throwaway one',
+              'generated on the build runner. It differs from build to build, which means the installer adds',
+              'a new certificate to the machine stores on every update.'
             )
           }
 
@@ -413,6 +463,7 @@ jobs:
             'The optional *Install ImDisk 3.0* task is not part of these builds, and the in-app updater is',
             'disabled because it requires binaries signed with the upstream project key.'
           )
+
           Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notes -Encoding UTF8
 
           # The tag is created once and then left alone. Deleting and recreating
