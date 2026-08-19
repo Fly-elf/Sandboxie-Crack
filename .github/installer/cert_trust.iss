@@ -50,16 +50,22 @@ begin
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
+var
+  NL: String;
 begin
+  // No line here may start with '#': the Inno preprocessor would read it as a
+  // directive, so newlines go through NL rather than inline #13#10.
+  NL := Chr(13) + Chr(10);
+
   if (CurPageID = wpReady) and (not IsPortable) and (not IsTestSigningOn) then
     SuppressibleMsgBox(
-      'Test signing is not enabled on this system.' #13#10#13#10 +
+      'Test signing is not enabled on this system.' + NL + NL +
       'The Sandboxie driver is signed with a self-issued certificate, so Windows will ' +
       'refuse to load it until the system is booted with test signing enabled. The ' +
       'installation will finish, but the driver and the Sandboxie service will not start.' +
-      #13#10#13#10 +
-      'To enable it, run this in an elevated Command Prompt and reboot:' #13#10#13#10 +
-      '    bcdedit /set testsigning on' #13#10#13#10 +
+      NL + NL +
+      'To enable it, run this in an elevated Command Prompt and reboot:' + NL + NL +
+      '    bcdedit /set testsigning on' + NL + NL +
       'Secure Boot must be turned off in UEFI first, otherwise that command is refused. ' +
       'Memory Integrity (Windows Security > Device security > Core isolation) must be ' +
       'off as well.',
