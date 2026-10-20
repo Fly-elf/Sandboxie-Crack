@@ -141,6 +141,41 @@ The certificate-trust task is not part of `Installer/Sandboxie-Plus.iss`; it is 
 at packaging time from [`.github/installer/cert_trust.iss`](./.github/installer/cert_trust.iss), so the
 upstream installer script stays untouched.
 
+## Syncing with upstream
+
+GitHub's *Sync fork* button refuses to run whenever upstream changes a file that was also changed here —
+in practice `README.md`, which is fully rewritten in this fork. Sync from the command line instead.
+
+One-time setup:
+
+```bash
+git remote add upstream https://github.com/sandboxie-plus/Sandboxie.git
+```
+
+Each sync:
+
+```bash
+git fetch upstream
+git merge-tree --write-tree --name-only master upstream/master   # optional dry run: lists conflicting files
+git merge upstream/master
+```
+
+If `README.md` is the only conflict, keep the local version and finish the merge:
+
+```bash
+git checkout --ours README.md
+git add README.md
+git commit --no-edit
+git push origin master
+```
+
+For any other conflicting file, list them with `git diff --name-only --diff-filter=U`, resolve the
+`<<<<<<<` / `=======` / `>>>>>>>` markers by hand, then `git add` them and commit. To back out before
+committing, run `git merge --abort`.
+
+Files edited in this fork that upstream also touches, such as `Sandboxie/core/drv/verify.c`, can merge
+without a conflict and still change behavior. Review `git diff HEAD` on them before committing the merge.
+
 ## Licensing and credits
 
 All application code, and all credit for it, belongs to the upstream project and its contributors —
