@@ -144,7 +144,32 @@ upstream installer script stays untouched.
 ## Syncing with upstream
 
 GitHub's *Sync fork* button refuses to run whenever upstream changes a file that was also changed here —
-in practice `README.md`, which is fully rewritten in this fork. Sync from the command line instead.
+in practice `README.md`, which is fully rewritten in this fork. Syncing is done by a workflow, or from the
+command line.
+
+### Automatic sync
+
+[`sync-upstream.yml`](./.github/workflows/sync-upstream.yml) runs every Monday and Thursday. It merges the
+newest upstream `vX.Y.Z` tag into `master` (that exact commit, not upstream's `master`), keeps this fork's
+`README.md` on conflict, tags the merge commit `X.Y.Z` and pushes. The push starts CI, and a successful CI run
+on a tagged commit is published by `release.yml` as a regular release rather than the rolling `nightly`. A
+conflict in any other file fails the run and leaves `master` untouched; merge by hand as described below.
+
+Run it ahead of schedule from the *Actions* tab. With *dry run* ticked it merges without pushing and lists the
+changed files. Only the latest tag is considered, and nothing happens when it is already merged.
+
+The workflow pushes with a personal access token, because the default `GITHUB_TOKEN` cannot push upstream's
+changes to `.github/workflows`. Create a fine-grained token for this repository only, with **Contents** and
+**Workflows** set to read and write, then store it as the `SYNC_TOKEN` secret:
+
+```bash
+gh secret set SYNC_TOKEN --repo <owner>/<repo>
+```
+
+Fine-grained tokens expire after at most a year. When the sync fails with an authentication error, issue a new
+one and set the secret again.
+
+### Manual sync
 
 One-time setup:
 

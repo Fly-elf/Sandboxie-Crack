@@ -1,0 +1,170 @@
+name: Sync upstream
+
+# Merges the newest upstream release tag (vX.Y.Z) into master. The push starts
+# "CI" and, once it succeeds, "Release" publishes the result. The tag commit is
+# merged rather than upstream master so the binaries match the version they are
+# labelled with. Nothing is stored: a tag is "new" when it is not yet an
+# ancestor of master.
+#
+# Pushing needs the SYNC_TOKEN secret, a PAT with Contents and Workflows
+# read/write. The default GITHUB_TOKEN can neither push commits that touch
+# .github/workflows (upstream does) nor start CI from its pushes.
+
+on:
+  schedule:
+    - cron: '17 5 * * 1,4'
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream tag to merge (empty = latest vX.Y.Z). With dry run any upstream ref works, e.g. master'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Merge locally and report, do not push'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/sandboxie-plus/Sandboxie.git
+  # Files where the fork's version always wins. Any other conflict fails the run.
+  OURS_PATHS: README.md
+
+jobs:
+
+  Sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+
+      - name: Checkout master
+        uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Resolve upstream tag
+        id: tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$INPUT_TAG" ]; then
+            ref="$INPUT_TAG"
+          else
+            ref=$(git ls-remote --tags --refs --sort=-v:refname "$UPSTREAM_URL" 'refs/tags/v1.*' \
+                  | sed 's|.*refs/tags/||' | grep -E '^v1\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+            [ -n "$ref" ] || { echo '::error::No upstream release tag found.'; exit 1; }
+          fi
+
+          if ! git fetch -q --no-tags "$UPSTREAM_URL" "+refs/tags/$ref:refs/sync/target" 2>/dev/null; then
+            git fetch -q --no-tags "$UPSTREAM_URL" "+refs/heads/$ref:refs/sync/target"
+          fi
+          sha=$(git rev-parse 'refs/sync/target^{commit}')
+
+          version=''
+          if [[ "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then version="${BASH_REMATCH[1]}"; fi
+
+          if git merge-base --is-ancestor "$sha" HEAD; then
+            echo "::notice::$ref ($sha) is already in master, nothing to do."
+            echo 'merge=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "Merging $ref ($sha)"
+            echo 'merge=true' >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "ref=$ref"
+            echo "sha=$sha"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Merge
+        if: steps.tag.outputs.merge == 'true'
+        shell: bash
+        env:
+          REF: ${{ steps.tag.outputs.ref }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if ! git merge --no-ff --no-commit "$SHA"; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ -z "$conflicts" ]; then
+              git merge --abort
+              echo '::error::git merge failed without conflicting files.'
+              exit 1
+            fi
+
+            unresolved=''
+            while IFS= read -r f; do
+              if [[ " $OURS_PATHS " == *" $f "* ]]; then
+                echo "Conflict in $f: keeping the fork's version."
+                git checkout --ours -- "$f"
+                git add -- "$f"
+              else
+                unresolved="$unresolved $f"
+              fi
+            done <<< "$conflicts"
+
+            if [ -n "$unresolved" ]; then
+              git merge --abort
+              echo "::error::Conflicts to resolve by hand:$unresolved"
+              exit 1
+            fi
+          fi
+
+          git commit -q -m "Merge upstream $REF"
+          git log --oneline -1
+
+      - name: Dry run report
+        if: steps.tag.outputs.merge == 'true' && inputs.dry_run
+        shell: bash
+        env:
+          REF: ${{ steps.tag.outputs.ref }}
+        run: |
+          {
+            echo "## Dry run: merge of $REF succeeded"
+            echo
+            echo 'Nothing was pushed. Files changed by the merge:'
+            echo
+            echo '```'
+            git diff --stat HEAD~1 HEAD | tail -n 25
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Push master and release tag
+        if: steps.tag.outputs.merge == 'true' && !inputs.dry_run
+        shell: bash
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          REF: ${{ steps.tag.outputs.ref }}
+        run: |
+          set -euo pipefail
+
+          [ -n "$SYNC_TOKEN" ] || { echo '::error::SYNC_TOKEN secret is not set, see the header of this workflow.'; exit 1; }
+          [ -n "$VERSION" ]    || { echo "::error::'$REF' is not a vX.Y.Z release tag, refusing to push it."; exit 1; }
+          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+            echo "::error::Tag $VERSION already exists in this repository."
+            exit 1
+          fi
+
+          git tag "$VERSION" HEAD
+          git push origin HEAD:master "refs/tags/$VERSION"
+
+          echo "## Synced $REF" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed master and tag \`$VERSION\`. CI and Release start from this push." >> "$GITHUB_STEP_SUMMARY"

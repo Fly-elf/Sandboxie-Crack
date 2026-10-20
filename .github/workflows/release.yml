@@ -75,8 +75,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Could not read CI run $runId." }
           if ($info.conclusion -ne 'success') { throw "CI run $runId did not succeed (conclusion: $($info.conclusion))." }
 
-          Write-Host "Packaging CI run $($info.databaseId) ($($info.headBranch) @ $($info.headSha))"
+          # sync-upstream.yml tags the merge commit of an upstream release with its
+          # bare version (1.18.9). A build of such a commit is a proper release,
+          # anything else is the rolling nightly.
+          $refs = @(gh api "repos/$env:GH_REPO/git/matching-refs/tags/" --paginate --jq '.[] | [.object.sha, .ref] | @tsv')
+          if ($LASTEXITCODE -ne 0) { throw "Could not list the tags of $env:GH_REPO." }
+          $versionTag = $refs | Where-Object { $_ -like "$($info.headSha)*" } |
+                        ForEach-Object { ($_ -split '\s+')[1] -replace '^refs/tags/', '' } |
+                        Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Select-Object -First 1
+
+          Write-Host "Packaging CI run $($info.databaseId) ($($info.headBranch) @ $($info.headSha)), version tag: '$versionTag'"
           "run_id=$($info.databaseId)"   >> $env:GITHUB_OUTPUT
+          "version_tag=$versionTag"      >> $env:GITHUB_OUTPUT
           "run_url=$($info.url)"         >> $env:GITHUB_OUTPUT
           "head_sha=$($info.headSha)"    >> $env:GITHUB_OUTPUT
           "head_branch=$($info.headBranch)" >> $env:GITHUB_OUTPUT
@@ -428,6 +438,7 @@ jobs:
           $runUrl  = '${{ steps.ci.outputs.run_url }}'
 
           $tag = '${{ inputs.tag }}'.Trim()
+          if (-not $tag -and '${{ github.event_name }}' -eq 'workflow_run') { $tag = '${{ steps.ci.outputs.version_tag }}' }
           if (-not $tag) { $tag = 'nightly' }
           $rolling = ($tag -eq 'nightly')
 
