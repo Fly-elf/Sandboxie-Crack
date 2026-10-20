@@ -376,6 +376,24 @@ jobs:
             }
           }
 
+      # Optional extra release asset. LICENSE_INI is the base64 of the file, so
+      # its content never lands in the repository. Skipped when the secret is unset.
+      - name: Add license.ini
+        shell: pwsh
+        env:
+          LICENSE_INI: ${{ secrets.LICENSE_INI }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          if (-not $env:LICENSE_INI) {
+            Write-Host '::notice::LICENSE_INI secret not set - not adding license.ini to the release.'
+            exit 0
+          }
+
+          [IO.File]::WriteAllBytes("$env:OUTDIR\license.ini", [Convert]::FromBase64String($env:LICENSE_INI.Trim()))
+          Write-Host "Added license.ini ($((Get-Item "$env:OUTDIR\license.ini").Length) bytes)"
+
       - name: Checksums
         shell: pwsh
         run: |
