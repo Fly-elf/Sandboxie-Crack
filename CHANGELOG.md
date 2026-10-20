@@ -4,10 +4,52 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 
 
-## [1.18.6 / 5.73.6] - 2026-10-??
+
+## [1.18.8 / 5.73.8] - 2026-10-17
+
+### Added
+- made it easier to choose a sandbox in Set Open and Set Force dialog: select from a list showing sandbox names and aliases, or start typing a name or alias to see suggestions
+- added an option to skip the Set Open and Set Force dialog when only one sandbox is available. Check "Skip this dialog when only one sandbox is enabled" to use that sandbox automatically. The dialog is shown by default [#5653](https://github.com/sandboxie-plus/Sandboxie/issues/5653)
+- added "fixboxdacls" command to KmdUtil.exe, it adds the AppContainer ACEs to already existing boxes
+- added `KeepBroadGroupsInAppContainerToken=n` to restore the old all-deny-only AppContainer stand-in token
+- added `NeutralizeLowBoxToken=n` to let a direct `NtCreateLowBoxToken` call through
+- `FakeAppContainerToken` is now evaluated, `=n` lets a boxed program create real AppContainer children
+
+### Fixed
+- fixed video playback in sandboxed Firefox on sites awaiting `mediaCapabilities.decodingInfo()`, like espn.com
+- fixed boxes lacking AppContainer ACEs, which made an AppContainer child of a boxed program die with `0xC0000022`
+- fixed the restricted stand-in for an AppContainer token disabling every group, leaving it unable to open `\KnownDlls`
+- fixed boxed IPC objects lacking AppContainer ACEs, which crashed Firefox's media CDM process in app compartment boxes as it could not connect to the boxed epmapper
+- fixed "SBIE2204 Cannot start sandboxed service RpcSs (1341)" from AppContainer processes in app compartment boxes, they now find the already running boxed RpcSs
+- fixed an out-of-bounds read in the GUI proxy's MapWindowPoints handler leaking service heap to sandboxed callers
+- `UnRestrictAppContainerToken` no longer defaults to on for MS Edge, the stand-in token works for it again
+- fixed Import Boxes not letting the user choose where the imported sandboxes are created [#5657](https://github.com/sandboxie-plus/Sandboxie/issues/5657)
+
+
+
+## [1.18.7 / 5.73.7] - 2026-10-16
+
+### Fixed
+- fixed issues with root protect IOCTLs
+- fixed issue with set low label
+- fixed issue with monitor API
+- fixed issues with Base64 decoding
+- fixed issue with API_RENAME_FILE
+- fixed issue with template handling
+
+
+
+## [1.18.6 / 5.73.6] - 2026-10-11
+
+### Added
+- added Persian (Farsi) translations for SandMan, the Troubleshooting Wizard and the installer [#5633](https://github.com/sandboxie-plus/Sandboxie/pull/5633) (thanks imalyzer)
 
 ### Fixed
 - fixed corrupted SBIE message links in SandMan when URL-encoded characters were interpreted as message placeholders
+- fixed updater issues
+- fixed issues with transient exception handling
+- fixed path handling issues
+- fixed possible null pointer exception when unloading driver
 
 
 
@@ -33,7 +75,7 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 - fixed stale INI completion-popup candidate tooltips during editing and limited `Template`/`TemplateReject` tooltips to setting-name text
 - fixed SandMan File Panel "Create Shortcut" producing a shortcut without a working directory, so the sandboxed program inherited SandMan's current directory and applications that open their data files by relative path failed to find them [#5542](https://github.com/sandboxie-plus/Sandboxie/issues/5542)
-- fixed wrong return type ein sbiesvc
+- fixed wrong return type in SbieSvc
 - fixed archive path cleaning
 
 ### Removed
@@ -67,7 +109,7 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 - added a SandMan setting to restore either the active or default snapshot after automatic deletion, consistently across synchronous and asynchronous cleanup, with Snapshot Manager access and refresh controls
 
 ### Changed
-- changed SandMan's Auto Expand Tree to preserve explicit group, sandbox, and process expansion choices while using the toggle as the default for items without saved state; Find bar Expand All and Collapse All remain one-time actions, and `Options/LegacyAutoExpandTree=true` retains the previous behavior [#5491](https://github.com/sandboxie-plus/Sandboxie/pull/5491)
+- changed SandMan's Auto Expand Tree to preserve explicit group, sandbox, and process expansion choices while using the toggle as the default for items without saved state; Find bar Expand All and Collapse All remain one-time actions, and `Options/LegacyAutoExpandTree=true` retains the previous behaviour [#5491](https://github.com/sandboxie-plus/Sandboxie/pull/5491)
 - validated compatibility with Windows build 29634 and updated DynData
 - changed SandMan Trace Log auto scrolling overriding manual scrolling; it now pauses away from the bottom and provides an in-list resume button
 
@@ -84,7 +126,7 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 - fixed ApiTrace stack exhaustion on Cygwin and other alternate stacks by replacing callback-side formatting with a compact synchronous logging path, preserving legacy ordering and stack capture
 - improved early stack symbol loading by retrying unresolved addresses after process discovery and refreshing the DbgHelp module list when needed
 - fixed SandMan offering to install the DbgHelp add-on when enabling stack traces even though the add-on was already installed
-- fixed ConfidentialBox=y could trap the user on a black screen when trying to elevate a process.
+- fixed 'ConfidentialBox=y' could trap the user on a black screen when trying to elevate a process
 
 
 
