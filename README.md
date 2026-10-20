@@ -78,7 +78,7 @@ If test signing is off, the installer says so on the Ready page and tells you th
 Launch Sandboxie-Plus from the Start menu. Done.
 
 **Future updates:** steps 2 to 4 are permanent, and the certificate stays trusted, so from here on updating
-is just running the new installer.
+is just running the new installer, or the [update script](#updating) below.
 
 ### If the driver still will not start
 
@@ -112,6 +112,60 @@ bcdedit /set testsigning off
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
     /v Enabled /t REG_DWORD /d 1 /f
 ```
+
+## Updating
+
+The built-in updater is disabled in this fork, because it only accepts installers signed with upstream's key.
+[`scripts/Update-Sandboxie.ps1`](./scripts/Update-Sandboxie.ps1) does the same job against this repository's
+releases, like `winget upgrade`:
+
+```powershell
+.\Update-Sandboxie.ps1 -CheckOnly   # report the newest version, no elevation needed
+.\Update-Sandboxie.ps1              # from an elevated PowerShell: asks, then installs
+```
+
+It looks at the latest stable release (the rolling `nightly` is ignored) and does nothing when you are up to
+date. Otherwise it downloads the installer for your architecture, checks it against `SHA256SUMS.txt` and against
+the certificate that signed the installed driver, terminates sandboxed programs, closes SandMan and runs the
+installer silently. SandMan is reopened if it was running.
+
+| Option | Effect |
+| --- | --- |
+| `-Yes` | Do not ask for confirmation. |
+| `-TrustNewSigner` | Accept an installer signed by a different certificate than the installed driver, for when the signing certificate was replaced on purpose. |
+| `-Repo <owner>/<repo>` | Update from another repository. |
+
+### Automatic updates
+
+Task Scheduler is the Windows counterpart of `cron`. From an elevated PowerShell, put the script where only
+administrators can write to it (the task runs it elevated) and register a weekly task:
+
+```powershell
+$dir = "$env:ProgramFiles\Sandboxie-Updater"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest https://raw.githubusercontent.com/Fly-elf/Sandboxie-Crack/master/scripts/Update-Sandboxie.ps1 `
+    -OutFile "$dir\Update-Sandboxie.ps1"
+
+$action    = New-ScheduledTaskAction -Execute powershell.exe `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dir\Update-Sandboxie.ps1`" -Yes"
+$trigger   = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 12:00
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+Register-ScheduledTask 'Update Sandboxie-Plus' -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+```
+
+The task runs in your own session, so SandMan reopens where you can see it, and elevated without a prompt.
+`-StartWhenAvailable` runs a missed update as soon as the machine is on again. Upstream releases reach this
+fork within about four days of being published. An update terminates sandboxed programs, so pick a time when
+nothing important runs inside a sandbox, and change `-DaysOfWeek` and `-At` to taste.
+
+```powershell
+Start-ScheduledTask 'Update Sandboxie-Plus'                                                 # run it now
+Get-ScheduledTaskInfo 'Update Sandboxie-Plus' | Select-Object LastRunTime, LastTaskResult   # 0 = success
+Unregister-ScheduledTask 'Update Sandboxie-Plus' -Confirm:$false                            # remove it
+```
+
+The task uses the copy of the script downloaded above: download it again to pick up changes to the script itself.
 
 ## Building from source
 
